@@ -30,6 +30,52 @@ export async function GET(
       );
     }
 
+    // Check for admin/CRM mode first
+    const adminSessionCookie = request.cookies.get('crm_admin_session');
+    let isCrmMode = false;
+
+    // Auto-detect CRM mode if ID is a number (CRM IDs are integers, Gmail IDs are hex/alphanumeric strings)
+    if (/^\d+$/.test(emailId)) {
+      isCrmMode = true;
+    } else if (adminSessionCookie) {
+      try {
+        const sessionData = JSON.parse(Buffer.from(adminSessionCookie.value, 'base64').toString('utf-8'));
+        if (sessionData.userId === '00000000-0000-0000-0000-000000000001') {
+          isCrmMode = true;
+        }
+      } catch { } // Ignore JSON parse errors
+    }
+
+    // Try fetching from CRM if in CRM mode
+    if (isCrmMode) {
+      const { getCrmEmailById } = await import('@/lib/crm-email-provider');
+      try {
+        const crmEmail = await getCrmEmailById(emailId);
+        if (crmEmail) {
+          // Ensure ticket exists in background
+          ensureTicketForEmail(
+            {
+              id: crmEmail.id,
+              threadId: crmEmail.threadId,
+              subject: crmEmail.subject,
+              from: crmEmail.from,
+              to: crmEmail.to,
+              date: crmEmail.date,
+              snippet: crmEmail.snippet,
+              body: crmEmail.body, // Provide full email data for ticket
+              attachments: crmEmail.attachments // Pass attachments if available (ensureTicketForEmail might need update to store them, but for now this just ensures the call is correct)
+            },
+            false
+          ).catch(err => console.error('Error ensuring ticket for CRM email:', err));
+
+          return NextResponse.json({ email: crmEmail });
+        }
+      } catch (crmError) {
+        console.error('Error fetching CRM email:', crmError);
+        // Fall through to Gmail/Storage if CRM fetch fails (might be a non-CRM email ID pattern)
+      }
+    }
+
     // Check local storage first (optimized indexed query)
     const cachedEmail = await getStoredEmailById(emailId);
 
@@ -49,7 +95,7 @@ export async function GET(
 
     // Fetch the specific email
     const email = await getEmailById(tokens, emailId);
-    
+
     if (!email) {
       return NextResponse.json(
         { error: 'Email not found' },
@@ -79,8 +125,8 @@ export async function GET(
   } catch (error) {
     console.error('Error fetching email:', error);
     return NextResponse.json(
-      { 
-        error: 'Failed to fetch email', 
+      {
+        error: 'Failed to fetch email',
         details: (error as Error).message,
       },
       { status: 500 }

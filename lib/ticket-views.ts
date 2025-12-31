@@ -51,7 +51,8 @@ export async function upsertTicketView(
 
   const { data, error } = await supabase
     .from('ticket_views')
-    .upsert(payload, { onConflict: 'user_id,ticket_id' })
+    .upsert(payload, { onConflict: 'user_id,ticket_id' }) // Remove space for standard format
+    // 'user_id, ticket_id' might work but 'user_id,ticket_id' is safer
     .select('ticket_id, last_viewed_at')
     .maybeSingle()
 

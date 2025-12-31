@@ -21,6 +21,22 @@ interface Email {
   departmentName?: string | null // NEW: Department name from ticket
 }
 
+const cleanSnippet = (text: string) => {
+  if (!text) return ""
+  // Strip common HTML/CSS patterns that often appear in snippets
+  return text
+    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/[a-z0-9\\:-]+\*?\s*{[^}]*}/gi, '') // Remove CSS rules (including v:*)
+    .replace(/v\\?:[^*]*{[^}]*}/gi, '') // VML tags
+    .replace(/o\\?:[^*]*{[^}]*}/gi, '')
+    .replace(/w\\?:[^*]*{[^}]*}/gi, '')
+    .replace(/\.shape\s*{[^}]*}/gi, '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
 interface EmailListProps {
   selectedEmail: string | null
   onSelectEmail: (id: string, email?: Partial<Email>) => void
@@ -399,7 +415,7 @@ export default function EmailList({ selectedEmail, onSelectEmail, onLoadingChang
 
               {/* Row 3: Snippet */}
               <p className="text-xs text-muted-foreground/70 line-clamp-1 leading-relaxed">
-                {email.snippet || "No preview available"}
+                {cleanSnippet(email.snippet) || "No preview available"}
               </p>
 
               {/* Row 4: Badges */}

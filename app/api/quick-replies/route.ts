@@ -27,13 +27,21 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // Filter by created_by (user ID) so each user only sees their own quick replies
-    const { data, error } = await supabase
+    // For CRM admin, return all quick replies; for regular users, filter by created_by
+    const isAdminUser = userId === '00000000-0000-0000-0000-000000000001';
+
+    let query = supabase
       .from('quick_replies')
       .select('*')
-      .eq('created_by', userId)
       .order('category', { ascending: true })
       .order('title', { ascending: true });
+
+    // Only filter by created_by for non-admin users
+    if (!isAdminUser) {
+      query = query.eq('created_by', userId);
+    }
+
+    const { data, error } = await query;
 
     if (error) {
       console.error('Error fetching quick replies:', error);

@@ -126,9 +126,25 @@ export async function getCurrentUserId(): Promise<string | null> {
 
 /**
  * Get current user ID from request cookies
+ * Checks for CRM admin session first, then falls back to cookie-based user ID
  */
 export function getCurrentUserIdFromRequest(request: NextRequest): string | null {
   try {
+    // FIRST: Check for CRM admin session
+    const adminSessionCookie = request.cookies.get('crm_admin_session');
+    if (adminSessionCookie) {
+      try {
+        const sessionData = JSON.parse(Buffer.from(adminSessionCookie.value, 'base64').toString('utf-8'));
+        if (sessionData.userId) {
+          // Return the userId from the admin session (should be a valid UUID)
+          return sessionData.userId;
+        }
+      } catch {
+        // Invalid session, continue to fallback
+      }
+    }
+
+    // FALLBACK: Get from current_user_id cookie
     const userId = request.cookies.get(CURRENT_USER_ID_COOKIE_NAME)?.value;
     return userId || null;
   } catch (error) {

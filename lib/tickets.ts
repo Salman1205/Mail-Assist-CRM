@@ -25,6 +25,7 @@ export interface Ticket {
   departmentId?: string | null; // Department assignment
   departmentName?: string | null; // Department name (for display)
   classificationConfidence?: number | null; // AI classification confidence (0-100)
+  lastViewedAt?: string | null; // User specific view timestamp
 }
 
 export interface TicketSeed {
@@ -46,9 +47,30 @@ export interface TicketEmailLike {
   from: string;
   to: string;
   date: string;
+  body?: string;
+  snippet?: string;
+  attachments?: { id: string; filename: string; mimeType: string; size: number }[];
 }
 
-function mapRowToTicket(row: any): Ticket {
+function mapRowToTicket(row: any, currentUserId: string | null = null): Ticket {
+  // Extract lastViewedAt from nested ticket_views if available
+  // Since we fetch all views (to avoid PostgREST filter issues), we must filter by currentUserId here
+  let lastViewedAt = null;
+  // console.log(`[TicketMapper] Row ID: ${row.id}, ticket_views:`, row.ticket_views, 'CurrentUserID:', currentUserId);
+
+  if (row.ticket_views && Array.isArray(row.ticket_views) && row.ticket_views.length > 0) {
+    if (currentUserId) {
+      // Find the view belonging to the current user
+      const userView = row.ticket_views.find((v: any) => v.user_id === currentUserId);
+      if (userView) {
+        lastViewedAt = userView.last_viewed_at;
+      }
+    } else {
+      // Fallback: take the first one? No, if no user, no view state.
+      // But maybe for debugging take first? Safer to be null.
+    }
+  }
+
   return {
     id: row.id,
     threadId: row.thread_id,
@@ -70,6 +92,7 @@ function mapRowToTicket(row: any): Ticket {
     departmentId: row.department_id || null,
     departmentName: row.department_name || null, // Joined from departments table
     classificationConfidence: row.classification_confidence || null,
+    lastViewedAt,
   };
 }
 
@@ -270,6 +293,28 @@ export async function ensureTicketForEmail(
   // Guess customer email based on direction
   const customerEmail = isFromAgent ? email.to : email.from;
 
+  // Sync email to Supabase 'emails' table for persistence
+  if (email.body || email.snippet) {
+    try {
+      await supabase.from('emails').upsert({
+        id: email.id,
+        thread_id: threadId,
+        subject: email.subject,
+        from_address: email.from,
+        to_address: email.to,
+        body: email.body || email.snippet || '',
+        date: dateIso,
+        is_sent: isFromAgent,
+        is_reply: false, // Can't easily determine this here, assume false for now
+        user_email: userEmail,
+        labels: ['INBOX'], // Default label
+      });
+      // console.log(`[Ticket] Synced email ${email.id} to Supabase`);
+    } catch (err) {
+      console.warn('Failed to sync email to Supabase:', err);
+    }
+  }
+
   // Try to find existing ticket
   let ticket = await getTicketByThreadId(threadId, userEmail);
 
@@ -382,8 +427,16 @@ export async function getTickets(
     .select(`
       *,
       assignee:users!tickets_assignee_user_id_fkey(id, name),
-      department:departments(id, name)
+      department:departments(id, name),
+      ticket_views(user_id, last_viewed_at)
     `);
+
+  // Note: We are now fetching ALL views and filtering in JS (mapRowToTicket) 
+  // because embedded filtering can sometimes be tricky with left joins/inner joins.
+  // This is safer for data correctness even if slightly more bandwidth.
+  // if (currentUserId) {
+  //   query = query.eq('ticket_views.user_id', currentUserId);
+  // }
 
   // Filter by Gmail account (the primary account scoping)
   if (userEmail) {
@@ -441,7 +494,7 @@ export async function getTickets(
 
   // Map rows to tickets, extracting assignee name from JOIN
   return data.map((row: any) => {
-    const ticket = mapRowToTicket(row);
+    const ticket = mapRowToTicket(row, currentUserId);
     // Extract assignee name from joined users table
     if (row.assignee && typeof row.assignee === 'object' && row.assignee.name) {
       ticket.assigneeName = row.assignee.name;

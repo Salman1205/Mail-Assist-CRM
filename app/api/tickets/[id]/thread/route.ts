@@ -32,14 +32,14 @@ export async function GET(
     const userId = getCurrentUserIdFromRequest(request);
     const userEmail = await getCurrentUserEmail();
 
-    if (!userId || !userEmail) {
+    if (!userId) {
       return NextResponse.json(
         { error: 'Not authenticated' },
         { status: 401 }
       );
     }
 
-    // Check permissions
+    // Get ticket details
     const canViewAll = await canViewAllTickets(userId);
     const ticket = await getTicketById(ticketId, userId, canViewAll, userEmail);
 
@@ -50,32 +50,78 @@ export async function GET(
       );
     }
 
-    // Get tokens and fetch thread
-    // First try the ticket's user_email, then fallback to current user's email
-    let tokens = await getValidTokens(ticket.userEmail);
+    // 1. Try to fetch from Supabase 'emails' table (local sync)
+    // This is the fastest method if data is synced
+    try {
+      const { supabase } = await import('@/lib/supabase');
+      if (supabase) {
+        const { data: localEmails } = await supabase
+          .from('emails')
+          .select('*')
+          .eq('thread_id', ticket.threadId)
+          .order('date', { ascending: true });
 
-    // Fallback: If ticket's userEmail doesn't have tokens, try current user's email
-    if ((!tokens || !tokens.access_token) && userEmail && userEmail !== ticket.userEmail) {
-      console.log(`[Thread] Ticket userEmail ${ticket.userEmail} has no tokens, trying current user ${userEmail}`);
-      tokens = await getValidTokens(userEmail);
+        if (localEmails && localEmails.length > 0) {
+          // Map to message format
+          const messages = localEmails.map(email => ({
+            id: email.id,
+            threadId: email.thread_id,
+            subject: email.subject,
+            from: email.from_address,
+            to: email.to_address,
+            date: email.date,
+            body: email.body,
+            snippet: email.body ? email.body.substring(0, 100) : '',
+            isReply: email.is_reply
+          }));
+
+          return NextResponse.json({ messages });
+        }
+      }
+    } catch (localError) {
+      console.warn('Failed to fetch from Supabase emails table:', localError);
     }
 
-    if (!tokens || !tokens.access_token) {
-      return NextResponse.json(
-        { error: `No valid Gmail tokens found. Please reconnect your Gmail account.` },
-        { status: 401 }
-      );
+    // 2. Try to fetch from CRM database (MySQL)
+    try {
+      // If threadId is numeric, it's a CRM ticket - prioritize MySQL for full content and attachments
+      if (/^\d+$/.test(ticket.threadId)) {
+        const { getCrmEmailById } = await import('@/lib/crm-email-provider');
+        const email = await getCrmEmailById(ticket.threadId);
+
+        if (email) {
+          return NextResponse.json({
+            messages: [email]
+          });
+        }
+      }
+    } catch (dbError) {
+      console.warn('Failed to fetch from CRM DB, falling back to Gmail check:', dbError);
     }
 
-    const thread = await getThreadById(tokens, ticket.threadId);
+    // Fallback to Gmail if not found in CRM DB (legacy support)
+    // Only proceed if we have tokens, otherwise return empty or error
+    try {
+      let tokens = await getValidTokens(ticket.userEmail);
+      if ((!tokens || !tokens.access_token) && userEmail && userEmail !== ticket.userEmail) {
+        tokens = await getValidTokens(userEmail);
+      }
 
-    return NextResponse.json({ messages: thread.messages || [] });
+      if (tokens && tokens.access_token) {
+        const thread = await getThreadById(tokens, ticket.threadId);
+        return NextResponse.json({ messages: thread.messages || [] });
+      }
+    } catch (gmailError) {
+      console.warn('Gmail fetch failed:', gmailError);
+    }
+
+    // If we reached here, we couldn't find the thread in DB or Gmail
+    // Return empty array instead of error to prevent UI crash
+    return NextResponse.json({ messages: [] });
   } catch (error) {
     console.error('Error fetching ticket thread:', error);
-    return NextResponse.json(
-      { error: 'Failed to fetch thread', details: (error as Error).message },
-      { status: 500 }
-    );
+    // Return empty messages on error to prevent UI crash
+    return NextResponse.json({ messages: [] });
   }
 }
 

@@ -493,6 +493,26 @@ function parseEmailMessage(message: any, metadataOnly: boolean = false) {
     /^(re|fwd?):\s*/i.test(subject)
   );
 
+  // Extract attachments
+  const attachments: Array<{ id: string; filename: string; mimeType: string; size: number }> = [];
+  const extractAttachments = (part: any) => {
+    if (part.filename && part.body?.attachmentId) {
+      attachments.push({
+        id: part.body.attachmentId,
+        filename: part.filename,
+        mimeType: part.mimeType,
+        size: part.body.size,
+      });
+    }
+    if (part.parts) {
+      part.parts.forEach(extractAttachments);
+    }
+  };
+
+  if (message.payload) {
+    extractAttachments(message.payload);
+  }
+
   return {
     id: message.id,
     threadId: message.threadId,
@@ -505,6 +525,7 @@ function parseEmailMessage(message: any, metadataOnly: boolean = false) {
     body: bodyText,
     labels: message.labelIds || [],
     isReply,
+    attachments,
   };
 }
 

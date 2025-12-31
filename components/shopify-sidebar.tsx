@@ -4,8 +4,8 @@ import { useState, useEffect } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card"
 import { Skeleton } from "./ui/skeleton"
 import { Button } from "./ui/button"
-import { 
-  ShoppingBag, Package, DollarSign, Calendar, MapPin, 
+import {
+  User, Package, DollarSign, Calendar, MapPin,
   CheckCircle2, XCircle, AlertCircle, Loader2, ExternalLink, X
 } from "lucide-react"
 import { Alert, AlertDescription } from "./ui/alert"
@@ -60,17 +60,17 @@ export default function ShopifySidebar({ customerEmail, shopDomain, onClose }: S
       setError(null)
 
       const response = await fetch(`/api/shopify/customer?email=${encodeURIComponent(extractedEmail)}`)
-      
+
       if (!response.ok) {
         if (response.status === 404) {
           // Check if it's a config error or customer not found
           const errorData = await response.json()
           if (errorData.error && errorData.error.includes('not configured')) {
-            setError('Shopify integration not configured')
+            setError('Client info not available')
             setIsConfigured(false)
           } else {
             // Customer exists but not found in Shopify
-            setError('No customer found in Shopify')
+            setError('No client data found')
           }
           return
         }
@@ -81,7 +81,7 @@ export default function ShopifySidebar({ customerEmail, shopDomain, onClose }: S
       setCustomer(data.customer)
       setOrders(data.recentOrders || [])
       setTotalSpent(data.totalSpent || 0)
-      
+
       // Use currency from API response
       if (data.currency) {
         console.log('[Shopify] Detected currency:', data.currency)
@@ -149,8 +149,8 @@ export default function ShopifySidebar({ customerEmail, shopDomain, onClose }: S
       <div className="p-4 border-b border-border/50 bg-card/50 backdrop-blur-sm flex-shrink-0">
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">
-            <ShoppingBag className="w-5 h-5 text-primary" />
-            <h2 className="text-lg font-semibold">Shopify Customer</h2>
+            <User className="w-5 h-5 text-primary" />
+            <h2 className="text-lg font-semibold">Client Info</h2>
           </div>
           {onClose && (
             <Button
@@ -158,7 +158,7 @@ export default function ShopifySidebar({ customerEmail, shopDomain, onClose }: S
               variant="ghost"
               onClick={onClose}
               className="h-8 w-8 p-0 transition-all duration-300 ease-out hover:scale-110 hover:bg-muted hover:shadow-sm"
-              title="Close Shopify Info"
+              title="Close Client Info"
             >
               <X className="w-4 h-4 transition-transform duration-300 hover:rotate-90" />
             </Button>
@@ -186,9 +186,9 @@ export default function ShopifySidebar({ customerEmail, shopDomain, onClose }: S
           </div>
         ) : !isConfigured ? (
           <div className="text-sm text-muted-foreground text-center py-8">
-            <ShoppingBag className="w-12 h-12 mx-auto mb-4 text-muted-foreground/50" />
-            <p>Shopify integration not configured</p>
-            <p className="text-xs mt-2">Configure in Settings to view customer data</p>
+            <User className="w-12 h-12 mx-auto mb-4 text-muted-foreground/50" />
+            <p>Client info not available</p>
+            <p className="text-xs mt-2">Integration or data not available for this contact</p>
           </div>
         ) : loading ? (
           <div className="space-y-3">
@@ -198,9 +198,9 @@ export default function ShopifySidebar({ customerEmail, shopDomain, onClose }: S
           </div>
         ) : !customer && orders.length === 0 ? (
           <div className="text-sm text-muted-foreground text-center py-8">
-            <ShoppingBag className="w-12 h-12 mx-auto mb-4 text-muted-foreground/50" />
-            <p>No customer found in Shopify</p>
-            <p className="text-xs mt-2">This email may not be associated with any orders</p>
+            <User className="w-12 h-12 mx-auto mb-4 text-muted-foreground/50" />
+            <p>No client data found</p>
+            <p className="text-xs mt-2">This email is not associated with any recorded data</p>
           </div>
         ) : (
           <div className="space-y-4">
@@ -377,7 +377,7 @@ export default function ShopifySidebar({ customerEmail, shopDomain, onClose }: S
                 }}
               >
                 <ExternalLink className="h-3 w-3 mr-2" />
-                View in Shopify
+                View in CRM
               </Button>
             )}
           </div>

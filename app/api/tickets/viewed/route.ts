@@ -1,19 +1,27 @@
 import { NextRequest, NextResponse } from "next/server"
 import { getCurrentUserEmail } from "@/lib/storage"
-import { getCurrentUserIdFromRequest } from "@/lib/session"
+import { getCurrentUserIdFromRequest, getSessionUserEmailFromRequest } from "@/lib/session"
 import { getTicketViewsForUser } from "@/lib/ticket-views"
+import { getUserByEmail } from "@/lib/users"
 
 export async function GET(request: NextRequest) {
   try {
-    const userId = getCurrentUserIdFromRequest(request)
+    let userId = getCurrentUserIdFromRequest(request)
+    const sessionEmail = getSessionUserEmailFromRequest(request)
+
+    if (!userId && sessionEmail) {
+      const user = await getUserByEmail(sessionEmail)
+      if (user) userId = user.id
+    }
+
     if (!userId) {
       return NextResponse.json({ error: "Not authenticated" }, { status: 401 })
     }
 
     const userEmail = await getCurrentUserEmail()
-    if (!userEmail) {
-      return NextResponse.json({ error: "No Gmail account connected" }, { status: 400 })
-    }
+    // if (!userEmail) {
+    //   return NextResponse.json({ error: "No Gmail account connected" }, { status: 400 })
+    // }
 
     const views = await getTicketViewsForUser(userId, userEmail)
     const map: Record<string, string> = {}

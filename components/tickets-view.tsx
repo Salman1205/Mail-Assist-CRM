@@ -10,7 +10,7 @@ import { Input } from "@/components/ui/input"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Label } from "@/components/ui/label"
-import { Loader2, User, Mail, Clock, Tag, MessageSquare, Sparkles, X, Plus, ChevronDown, ChevronUp, Edit2, Check, XCircle, MoreVertical, Filter, ChevronRight, Search, ShoppingBag, Inbox, RefreshCw, Paperclip, Building2 } from "lucide-react"
+import { Loader2, User, Mail, Clock, Tag, Search, Filter, RefreshCw, RefreshCcw, MoreVertical, Paperclip, MessageSquare, Sparkles, ChevronDown, ChevronUp, Plus, X, Send, Trash2, Edit2, Check, ArrowLeft, ArrowRight, Download, Eye, FileText, CheckCircle2, XCircle, Inbox, ChevronRight, Building2 } from "lucide-react"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Switch } from "@/components/ui/switch"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -23,6 +23,7 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import QuickRepliesSidebar from "@/components/quick-replies-sidebar"
 import ShopifySidebar from "@/components/shopify-sidebar"
 import RichTextEditor from "@/components/rich-text-editor"
+import { EmailContentViewer } from "@/components/email-content-viewer"
 
 interface Ticket {
   id: string
@@ -44,6 +45,7 @@ interface Ticket {
   classificationConfidence?: number | null
   ownerEmail?: string
   userEmail?: string
+  lastViewedAt?: string | null
 }
 
 interface User {
@@ -71,6 +73,7 @@ interface ThreadMessage {
   to: string
   body: string
   date?: string
+  attachments?: { id: string; filename: string; mimeType: string; size: number }[]
 }
 
 interface QuickReply {
@@ -79,6 +82,22 @@ interface QuickReply {
   content: string
   category: string
   tags: string[]
+}
+
+const cleanSnippet = (text: string) => {
+  if (!text) return ""
+  // Strip common HTML/CSS patterns that often appear in snippets
+  return text
+    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/[a-z0-9\\:-]+\*?\s*{[^}]*}/gi, '') // Remove CSS rules (including v:*)
+    .replace(/v\\?:[^*]*{[^}]*}/gi, '') // VML tags
+    .replace(/o\\?:[^*]*{[^}]*}/gi, '')
+    .replace(/w\\?:[^*]*{[^}]*}/gi, '')
+    .replace(/\.shape\s*{[^}]*}/gi, '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
 }
 
 interface TicketsViewProps {
@@ -847,15 +866,14 @@ export default function TicketsView({ currentUserId, currentUserRole, globalSear
     try {
       const response = await fetch("/api/quick-replies")
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ error: 'Unknown error' }))
-        const errorMessage = errorData.error || errorData.details || "Failed to assign ticket"
-        toast({
-          title: "Assignment failed",
-          description: errorMessage,
-          variant: "destructive"
-        })
-        throw new Error(errorMessage)
+        // Silently fail - quick replies are optional
+        console.warn("Failed to fetch quick replies:", response.status)
+        return
       }
+      const data = await response.json()
+      // If we need to store quick replies for later use, do it here
+      // For now, just log success
+      console.log("Quick replies loaded:", data.quickReplies?.length || 0)
     } catch (err) {
       console.error("Error fetching quick replies:", err)
     }
@@ -928,7 +946,7 @@ export default function TicketsView({ currentUserId, currentUserRole, globalSear
 
   const hasNewCustomerReply = (ticket: Ticket) => {
     if (!ticket.lastCustomerReplyAt) return false
-    const lastSeen = lastViewedMap[ticket.id]
+    const lastSeen = lastViewedMap[ticket.id] || ticket.lastViewedAt
     if (!lastSeen) return true
     return new Date(ticket.lastCustomerReplyAt) > new Date(lastSeen)
   }
@@ -2811,7 +2829,7 @@ export default function TicketsView({ currentUserId, currentUserRole, globalSear
                         <button
                           onClick={() => setShowShopifySidebar(true)}
                           className="flex-shrink-0 hover:scale-110 transition-transform duration-200 cursor-pointer group"
-                          title="View Shopify customer info"
+                          title="View client info"
                         >
                           <Avatar className="h-12 w-12 border-2 border-border group-hover:border-primary transition-colors">
                             <AvatarFallback className="bg-primary/10 text-primary font-semibold text-sm">
@@ -2867,7 +2885,7 @@ export default function TicketsView({ currentUserId, currentUserRole, globalSear
                                 if (!conversationSummary) {
                                   setGeneratingSummary(true)
                                   try {
-                                    const summary = threadMessages.map(m => `${m.from}: ${(m.body || m.subject || "").substring(0, 200)}`).join("\n\n")
+                                    const summary = threadMessages.map(m => `${m.from}: ${m.body || m.subject || ""}`).join("\n\n")
                                     const response = await fetch("/api/ai/summarize", {
                                       method: "POST",
                                       headers: { "Content-Type": "application/json" },
@@ -2969,31 +2987,45 @@ export default function TicketsView({ currentUserId, currentUserRole, globalSear
                                         <span className="text-xs text-muted-foreground flex-shrink-0">{formatDate(msg.date)}</span>
                                       </div>
 
-                                      <div className="text-sm leading-6 whitespace-pre-wrap break-words overflow-wrap-anywhere w-full max-w-full overflow-hidden">
-                                        {main.join("\n") || msg.subject || "No content"}
-                                      </div>
-
-                                      {hasQuoted && (
-                                        <div className="space-y-1">
-                                          <Button
-                                            variant="ghost"
-                                            size="sm"
-                                            className="h-6 px-2 text-[10px] text-muted-foreground hover:text-muted-foreground"
-                                            onClick={(e) => {
-                                              e.stopPropagation()
-                                              setShowQuotedMap(prev => ({ ...prev, [key]: !prev[key] }))
-                                            }}
-                                          >
-                                            <MoreVertical className="w-3 h-3 mr-1" />
-                                            {showQuoted ? "Hide" : "Show"} quoted text
-                                          </Button>
-                                          {showQuoted && (
-                                            <div className="text-[11px] text-muted-foreground/70 whitespace-pre-wrap bg-muted/40 border-l-2 border-muted-foreground/30 pl-3 py-2 rounded leading-4 max-h-32 overflow-y-auto break-words overflow-wrap-anywhere w-full max-w-full overflow-x-hidden">
-                                              {quoted.join("\n")}
+                                      <div className="w-full max-w-full overflow-hidden">
+                                        {(/<[^>]+>/.test(msg.body || "") || /<style|!doctype|{behavior:|font-family:|padding:|margin:|\.shape|\.[a-z0-9\\:-]+\*?\s*{/i.test(msg.body || "")) ? (
+                                          <div className="w-full overflow-hidden my-2">
+                                            <EmailContentViewer
+                                              content={msg.body || ""}
+                                              emailId={msg.id}
+                                              attachments={msg.attachments}
+                                            />
+                                          </div>
+                                        ) : (
+                                          <>
+                                            <div className="text-sm leading-6 whitespace-pre-wrap break-words overflow-wrap-anywhere w-full max-w-full overflow-hidden">
+                                              {cleanSnippet(main.join("\n")) || msg.subject || "No content"}
                                             </div>
-                                          )}
-                                        </div>
-                                      )}
+
+                                            {hasQuoted && (
+                                              <div className="space-y-1 mt-2">
+                                                <Button
+                                                  variant="ghost"
+                                                  size="sm"
+                                                  className="h-6 px-2 text-[10px] text-muted-foreground hover:text-muted-foreground"
+                                                  onClick={(e) => {
+                                                    e.stopPropagation()
+                                                    setShowQuotedMap(prev => ({ ...prev, [key]: !prev[key] }))
+                                                  }}
+                                                >
+                                                  <MoreVertical className="w-3 h-3 mr-1" />
+                                                  {showQuoted ? "Hide" : "Show"} quoted text
+                                                </Button>
+                                                {showQuoted && (
+                                                  <div className="text-[11px] text-muted-foreground/70 whitespace-pre-wrap bg-muted/40 border-l-2 border-muted-foreground/30 pl-3 py-2 rounded leading-4 max-h-32 overflow-y-auto break-words overflow-wrap-anywhere w-full max-w-full overflow-x-hidden">
+                                                    {quoted.join("\n")}
+                                                  </div>
+                                                )}
+                                              </div>
+                                            )}
+                                          </>
+                                        )}
+                                      </div>
                                     </div>
                                   </div>
                                 </div>
@@ -3190,10 +3222,10 @@ export default function TicketsView({ currentUserId, currentUserRole, globalSear
                             variant={showShopifySidebar ? "default" : "outline"}
                             onClick={() => setShowShopifySidebar(!showShopifySidebar)}
                             className="h-7 text-xs transition-all duration-200 hover:scale-105"
-                            title="Toggle Shopify Customer Info"
+                            title="Toggle Client Info"
                           >
-                            <ShoppingBag className="w-3 h-3 mr-1" />
-                            Shopify
+                            <User className="w-3 h-3 mr-1" />
+                            Client Info
                           </Button>
                           <Button
                             size="sm"

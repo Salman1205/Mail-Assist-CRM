@@ -6,10 +6,7 @@ import { Sparkles, ChevronLeft, ChevronRight } from 'lucide-react'
 export type SidebarView =
   | "inbox"
   | "sent"
-  | "spam"
-  | "trash"
   | "drafts"
-  | "compose"
   | "settings"
   | "users"
   | "tickets"
@@ -27,28 +24,25 @@ interface SidebarProps {
 }
 
 const NAV_ITEMS = [
-  { id: "tickets", label: "Tickets", icon: TicketIcon },
-  { id: "inbox", label: "Inbox", icon: InboxIcon },
-  { id: "compose", label: "Compose", icon: ComposeIcon },
-  { id: "quick-replies", label: "Quick Replies", icon: QuickRepliesIcon },
-  { id: "sent", label: "Sent", icon: SentIcon },
-  { id: "drafts", label: "Drafts", icon: DraftIcon },
-  { id: "spam", label: "Spam", icon: SpamIcon },
-  { id: "trash", label: "Trash", icon: TrashIcon },
-  { id: "settings", label: "Settings", icon: SettingsIcon },
+  { id: "tickets", label: "Tickets", icon: TicketIcon, disabled: false },
+  { id: "inbox", label: "Inbox", icon: InboxIcon, disabled: false },
+  { id: "quick-replies", label: "Quick Replies", icon: QuickRepliesIcon, disabled: true },
+  { id: "sent", label: "Sent", icon: SentIcon, disabled: true },
+  { id: "drafts", label: "Drafts", icon: DraftIcon, disabled: true },
+  { id: "settings", label: "Settings", icon: SettingsIcon, disabled: true },
 ] as const
 
 const ADMIN_NAV_ITEMS = [
-  { id: "team", label: "Team Management", icon: UsersIcon },
-  { id: "departments", label: "Workstreams", icon: DepartmentsIcon },
+  { id: "team", label: "Team Management", icon: UsersIcon, disabled: true },
+  { id: "departments", label: "Workstreams", icon: DepartmentsIcon, disabled: true },
 ] as const
 
 const AI_NAV_ITEMS = [
-  { id: "ai-settings", label: "AI Customization", icon: SparklesIcon },
+  { id: "ai-settings", label: "AI Customization", icon: SparklesIcon, disabled: true },
 ] as const
 
 const ANALYTICS_NAV_ITEMS = [
-  { id: "analytics", label: "Analytics", icon: AnalyticsIcon },
+  { id: "analytics", label: "Analytics", icon: AnalyticsIcon, disabled: true },
 ] as const
 
 /**
@@ -117,6 +111,7 @@ export default function Sidebar({ activeView, setActiveView, onLogout, currentUs
               icon={<Icon className="w-5 h-5 flex-shrink-0" />}
               label={item.label}
               onClick={() => setActiveView(item.id)}
+              disabled={item.disabled}
             />
           )
         })}
@@ -135,7 +130,8 @@ export default function Sidebar({ activeView, setActiveView, onLogout, currentUs
                   isCollapsed={isCollapsed}
                   icon={<Icon className="w-5 h-5 flex-shrink-0" />}
                   label={item.label}
-                  onClick={() => setActiveView(item.id)}
+                  onClick={() => setActiveView(item.id as SidebarView)}
+                  disabled={item.disabled}
                 />
               )
             })}
@@ -156,7 +152,8 @@ export default function Sidebar({ activeView, setActiveView, onLogout, currentUs
                   isCollapsed={isCollapsed}
                   icon={<Icon className="w-5 h-5 flex-shrink-0" />}
                   label={item.label}
-                  onClick={() => setActiveView(item.id)}
+                  onClick={() => setActiveView(item.id as SidebarView)}
+                  disabled={item.disabled}
                 />
               )
             })}
@@ -171,7 +168,8 @@ export default function Sidebar({ activeView, setActiveView, onLogout, currentUs
                   isCollapsed={isCollapsed}
                   icon={<Icon className="w-5 h-5 flex-shrink-0" />}
                   label={item.label}
-                  onClick={() => setActiveView(item.id)}
+                  onClick={() => setActiveView(item.id as SidebarView)}
+                  disabled={item.disabled}
                 />
               )
             })}
@@ -199,29 +197,36 @@ interface NavButtonProps {
   icon: React.ReactNode
   label: string
   onClick?: () => void
+  disabled?: boolean
 }
 
-function NavButton({ isActive, isCollapsed, icon, label, onClick }: NavButtonProps) {
+function NavButton({ isActive, isCollapsed, icon, label, onClick, disabled }: NavButtonProps) {
   return (
     <button
-      onClick={onClick}
+      onClick={disabled ? undefined : onClick}
+      disabled={disabled}
       className={`
         group relative w-full flex items-center justify-center rounded-lg
         transition-all duration-200 ease-out
         ${isCollapsed ? "h-11 px-2" : "h-10 px-3 gap-3"}
-        ${isActive
-          ? "bg-primary text-primary-foreground shadow-sm"
-          : "text-foreground hover:bg-secondary/80 hover:text-primary"
+        ${disabled
+          ? "opacity-40 cursor-not-allowed text-muted-foreground"
+          : isActive
+            ? "bg-primary text-primary-foreground shadow-sm"
+            : "text-foreground hover:bg-secondary/80 hover:text-primary"
         }
         focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring
       `}
-      title={isCollapsed ? label : undefined}
+      title={isCollapsed ? (disabled ? `${label} (Coming Soon)` : label) : undefined}
     >
       <div className="flex-shrink-0">
         {icon}
       </div>
       {!isCollapsed && (
-        <span className="text-sm font-medium flex-1 text-left truncate">{label}</span>
+        <span className="text-sm font-medium flex-1 text-left truncate">
+          {label}
+          {disabled && <span className="text-xs ml-1 opacity-60">(Soon)</span>}
+        </span>
       )}
 
       {/* Tooltip for collapsed state */}
@@ -241,7 +246,7 @@ function NavButton({ isActive, isCollapsed, icon, label, onClick }: NavButtonPro
             transform: 'translateX(0)',
           }}
         >
-          {label}
+          {label}{disabled && " (Soon)"}
           {/* Tooltip arrow */}
           <div className="absolute right-full top-1/2 -translate-y-1/2 border-4 border-transparent border-r-gray-900 dark:border-r-gray-100" />
         </div>

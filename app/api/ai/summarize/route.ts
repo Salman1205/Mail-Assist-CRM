@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server"
 export async function POST(request: NextRequest) {
   try {
     const { conversation } = await request.json()
-    
+
     if (!conversation || typeof conversation !== "string") {
       return NextResponse.json(
         { error: "Conversation text is required" },
@@ -12,7 +12,7 @@ export async function POST(request: NextRequest) {
     }
 
     const apiKey = process.env.GROQ_API_KEY
-    
+
     if (!apiKey) {
       return NextResponse.json(
         { error: "GROQ_API_KEY not configured" },
@@ -32,11 +32,11 @@ export async function POST(request: NextRequest) {
         messages: [
           {
             role: 'system',
-            content: 'You are a helpful assistant that generates concise email conversation summaries. Provide a brief 2-3 sentence summary of what the conversation is about. Be direct and factual.',
+            content: 'You are a helpful assistant that generates concise email conversation summaries. You will receive email content which may contain raw HTML. Extract the core message and meaning while ignoring technical metadata, CSS, or formatting tags. Provide a brief 2-3 sentence summary of what the conversation is about. Be direct and factual.',
           },
           {
             role: 'user',
-            content: `Summarize this email conversation in 2-3 sentences:\n\n${conversation}`,
+            content: `Summarize this email conversation (which may contain HTML) in 2-3 sentences:\n\n${conversation}`,
           },
         ],
         temperature: 0.3,

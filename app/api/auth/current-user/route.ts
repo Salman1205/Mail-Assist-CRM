@@ -1,6 +1,6 @@
 /**
  * Get current user from session
- * Verifies that the user belongs to the current Gmail account
+ * Supports both CRM admin session and legacy Gmail OAuth
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -8,8 +8,34 @@ import { getSessionUserEmailFromRequest, getCurrentUserIdFromRequest } from '@/l
 import { getUserById } from '@/lib/users';
 import { supabase } from '@/lib/supabase';
 
+// Admin user object (same as in admin-login)
+const ADMIN_USER = {
+  id: '00000000-0000-0000-0000-000000000001',
+  name: 'Administrator',
+  email: 'admin@theinsolvencygroup.com',
+  role: 'admin',
+  businessId: null,
+  businessName: 'The Insolvency Group',
+  isActive: true,
+};
+
 export async function GET(request: NextRequest) {
   try {
+    // FIRST: Check for CRM admin session
+    const adminSessionCookie = request.cookies.get('crm_admin_session');
+    if (adminSessionCookie) {
+      try {
+        const sessionData = JSON.parse(Buffer.from(adminSessionCookie.value, 'base64').toString('utf-8'));
+        if (sessionData.userId === ADMIN_USER.id) {
+          return NextResponse.json({ user: ADMIN_USER });
+        }
+      } catch (parseError) {
+        console.error('[Current User] Invalid admin session cookie:', parseError);
+        // Continue to legacy auth flow
+      }
+    }
+
+    // LEGACY: Check for current_user_id cookie
     const userId = getCurrentUserIdFromRequest(request);
 
     if (!userId) {
@@ -17,6 +43,11 @@ export async function GET(request: NextRequest) {
         { error: 'No user selected' },
         { status: 404 }
       );
+    }
+
+    // Special case: If userId is the admin ID, return admin user
+    if (userId === ADMIN_USER.id) {
+      return NextResponse.json({ user: ADMIN_USER });
     }
 
     // Get current Gmail account from session

@@ -74,6 +74,28 @@ export async function getUserById(userId: string): Promise<User | null> {
 }
 
 /**
+ * Get user by Email
+ */
+export async function getUserByEmail(email: string): Promise<User | null> {
+  if (!supabase) return null;
+
+  const { data, error } = await supabase
+    .from('users')
+    .select('*')
+    .eq('user_email', email)
+    .maybeSingle();
+
+  if (error) {
+    console.error('Error fetching user by Email:', error);
+    return null;
+  }
+
+  if (!data) return null;
+
+  return mapRowToUser(data);
+}
+
+/**
  * Get all users for the current account context (business or personal)
  */
 export async function getAllUsers(businessId?: string | null, sharedGmailEmail?: string | null): Promise<User[]> {

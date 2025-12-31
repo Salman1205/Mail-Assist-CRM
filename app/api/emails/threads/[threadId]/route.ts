@@ -26,6 +26,27 @@ export async function GET(
       );
     }
 
+    // Check for CRM Mode (Numeric Thread ID)
+    if (/^\d+$/.test(threadId)) {
+      const { getCrmEmailById } = await import('@/lib/crm-email-provider');
+      try {
+        const email = await getCrmEmailById(threadId);
+        if (email) {
+          // Return as a thread with one message
+          return NextResponse.json({
+            thread: {
+              id: email.id,
+              historyId: email.id, // Mock historyId
+              messages: [email]
+            }
+          });
+        }
+      } catch (error) {
+        console.error('Error fetching CRM thread:', error);
+        // Fallback to Gmail if failed (unlikely for numeric ID but safe)
+      }
+    }
+
     const tokens = await getValidTokens();
 
     if (!tokens || !tokens.access_token) {

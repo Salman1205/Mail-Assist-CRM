@@ -553,6 +553,8 @@ function PageContent() {
         sessionStorage.removeItem("current_user_email")
         // Clear localStorage items that may contain stale email references
         localStorage.removeItem("inbox_selected_account")
+        localStorage.removeItem("gmail_connected") // Clear gmail connection flag
+        localStorage.removeItem("activeView")
       }
       setIsConnected(false)
       setCurrentUserId(null)
@@ -569,8 +571,11 @@ function PageContent() {
       setSyncError(null)
       setHideSyncToast(true)
       setHasAutoSynced(false)
-      // Keep the logging overlay visible briefly to show feedback
-      setTimeout(() => setLoggingOut(false), 600)
+      // Redirect to welcome page after brief delay
+      setTimeout(() => {
+        setLoggingOut(false)
+        window.location.href = '/welcome'
+      }, 500)
     }
   }
 
@@ -600,8 +605,6 @@ function PageContent() {
         return <TeamManagement />
       case "drafts":
         return <DraftsView key={currentUserId || "no-user"} refreshKey={draftsVersion} currentUserId={currentUserId} />
-      case "compose":
-        return <ComposeView key={currentUserId || "no-user"} currentUserId={currentUserId} onEmailSent={() => setTicketsVersion(v => v + 1)} setActiveView={setActiveView} />
       case "quick-replies":
         return <QuickRepliesView key={currentUserId || "no-user"} currentUserId={currentUserId} />
       case "tickets":
@@ -637,26 +640,7 @@ function PageContent() {
             globalSearchTerm={globalSearch}
           />
         )
-      case "spam":
-        return (
-          <InboxView
-            selectedEmail={selectedEmail}
-            onSelectEmail={setSelectedEmail}
-            onDraftGenerated={handleDraftGenerated}
-            viewType="spam"
-            globalSearchTerm={globalSearch}
-          />
-        )
-      case "trash":
-        return (
-          <InboxView
-            selectedEmail={selectedEmail}
-            onSelectEmail={setSelectedEmail}
-            onDraftGenerated={handleDraftGenerated}
-            viewType="trash"
-            globalSearchTerm={globalSearch}
-          />
-        )
+
       default:
         return (
           <InboxView
@@ -853,6 +837,7 @@ function PageContent() {
         </div>
       )}
 
+      {/* 
       {showSyncToast && (
         <SyncToast
           syncing={syncInProgress}
@@ -863,6 +848,7 @@ function PageContent() {
           onDismiss={() => setHideSyncToast(true)}
         />
       )}
+      */}
 
       {/* Personal Account Welcome Dialog */}
       <Dialog open={showPersonalAccountDialog} onOpenChange={setShowPersonalAccountDialog}>

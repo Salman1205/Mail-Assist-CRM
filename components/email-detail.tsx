@@ -7,7 +7,8 @@ import { Badge } from "@/components/ui/badge"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Input } from "@/components/ui/input"
 import { useToast } from "@/components/ui/use-toast"
-import { ArrowLeft, ChevronDown, ChevronUp, Sparkles, Loader2, Mail, ShoppingBag, Link as LinkIcon, Image as ImageIcon, Paperclip, Code, Bold, Italic, Underline, Strikethrough, List, ListOrdered, Quote, AlignLeft, AlignCenter, AlignRight, Highlighter, Type } from "lucide-react"
+import { ArrowLeft, ChevronDown, ChevronUp, Sparkles, Loader2, Mail, User, Link as LinkIcon, Image as ImageIcon, Paperclip, Code, Bold, Italic, Underline, Strikethrough, List, ListOrdered, Quote, AlignLeft, AlignCenter, AlignRight, Highlighter, Type } from "lucide-react"
+import { EmailContentViewer } from "@/components/email-content-viewer"
 
 const toPlainText = (html: string) => {
   if (!html) return ""
@@ -60,6 +61,7 @@ interface EmailMessage {
   body: string
   snippet?: string
   labels?: string[]
+  attachments?: { id: string; filename: string; mimeType: string; size: number }[]
 }
 
 interface EmailSummary {
@@ -71,6 +73,23 @@ interface EmailSummary {
   date: string
   body: string
   snippet?: string
+  attachments?: { id: string; filename: string; mimeType: string; size: number }[]
+}
+
+const cleanSnippet = (text: string) => {
+  if (!text) return ""
+  // Strip common HTML/CSS patterns that often appear in snippets
+  return text
+    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/[a-z0-9\\:-]+\*?\s*{[^}]*}/gi, '') // Remove CSS rules (including v:*)
+    .replace(/v\\?:[^*]*{[^}]*}/gi, '') // VML tags
+    .replace(/o\\?:[^*]*{[^}]*}/gi, '')
+    .replace(/w\\?:[^*]*{[^}]*}/gi, '')
+    .replace(/\.shape\s*{[^}]*}/gi, '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
 }
 
 export default function EmailDetail({ emailId, onDraftGenerated, onBack, initialEmailData, onToggleShopify, showShopifySidebar, ticketId, hideCloseButton }: EmailDetailProps) {
@@ -126,6 +145,20 @@ export default function EmailDetail({ emailId, onDraftGenerated, onBack, initial
       .then(data => setCurrentUserId(data?.id || null))
       .catch(() => setCurrentUserId(null))
   }, [])
+
+  // Auto-scroll to top when emailId changes
+  useEffect(() => {
+    // Find the scrollable container - in this layout it's likely the Card content or the window/main area depending on layout
+    // Given the structure, we can try to scroll the Card's content area if it has a ref, or just the window
+    // But looking at the layout, it seems the page scrolls. Let's try window scroll and also try to find a main scroll area.
+    window.scrollTo(0, 0);
+
+    // Also try to scroll the specific container if it exists
+    const mainContent = document.querySelector('.overflow-y-auto');
+    if (mainContent) {
+      mainContent.scrollTop = 0;
+    }
+  }, [emailId]);
 
   useEffect(() => {
     return () => {
@@ -974,6 +1007,29 @@ export default function EmailDetail({ emailId, onDraftGenerated, onBack, initial
     }
   }
 
+  const allAttachments = React.useMemo(() => {
+    const list: { id: string; filename: string; mimeType: string; size: number, msgId: string }[] = []
+    const seen = new Set<string>()
+
+    // Helper to add attachments
+    const add = (atts: { id: string; filename: string; mimeType: string; size: number }[] | undefined, msgId: string) => {
+      atts?.forEach(att => {
+        if (!seen.has(att.id)) {
+          seen.add(att.id)
+          list.push({ ...att, msgId })
+        }
+      })
+    }
+
+    if (threadMessages.length > 0) {
+      threadMessages.forEach(msg => add(msg.attachments, msg.id))
+    } else if (emailSummary) {
+      add(emailSummary.attachments, emailSummary.id)
+    }
+
+    return list
+  }, [threadMessages, emailSummary])
+
   return (
     <div className="h-full flex flex-col bg-muted/20 overflow-hidden">
       {onBack && (
@@ -990,307 +1046,427 @@ export default function EmailDetail({ emailId, onDraftGenerated, onBack, initial
         </div>
       )}
 
-      <div className="flex-1 overflow-y-auto overflow-x-hidden">
-        <Card className={`mx-4 md:mx-6 mt-4 mb-3 flex flex-col overflow-hidden max-w-full shadow-lg ${showDraft && !draftMinimized ? 'flex-shrink-0 max-h-[40vh]' : 'flex-1'}`}>
-          <div className="px-6 py-5 border-b border-border flex-shrink-0 overflow-hidden bg-card">
-            <div className="flex items-start justify-between gap-4 mb-2">
-              <h2 className="text-xl font-bold text-foreground line-clamp-2 break-words flex-1">
-                {threadMessages[threadMessages.length - 1]?.subject || emailSummary?.subject || "(No subject)"}
-              </h2>
-              {threadMessages.length > 0 && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={async () => {
-                    if (!conversationSummary) {
-                      setGeneratingSummary(true)
-                      try {
-                        const summary = threadMessages.map(m => `${m.from}: ${(m.body || m.subject || "").substring(0, 200)}`).join("\n\n")
-                        const response = await fetch("/api/ai/summarize", {
-                          method: "POST",
-                          headers: { "Content-Type": "application/json" },
-                          body: JSON.stringify({ conversation: summary })
-                        })
-                        if (response.ok) {
-                          const data = await response.json()
-                          setConversationSummary(data.summary)
+      {/* Main Content Area - Wrapper for Flex Layout */}
+      <div className="flex-1 flex overflow-hidden min-h-0">
+
+        {/* Scrollable Thread Content */}
+        <div className="flex-1 overflow-y-auto overflow-x-hidden p-4 md:p-6 space-y-4">
+          {/* Email Content Card */}
+          <Card className={`flex flex-col overflow-hidden max-w-full shadow-lg ${showDraft && !draftMinimized ? 'flex-shrink-0' : 'flex-1'} min-h-[500px]`}>
+            <div className="px-6 py-5 border-b border-border flex-shrink-0 overflow-hidden bg-card">
+              <div className="flex items-start justify-between gap-4 mb-2">
+                <div className="flex-1 min-w-0">
+                  <h2 className="text-xl font-bold text-foreground line-clamp-2 break-words text-left">
+                    {threadMessages[threadMessages.length - 1]?.subject || emailSummary?.subject || "(No subject)"}
+                  </h2>
+                </div>
+                {threadMessages.length > 0 && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={async () => {
+                      if (!conversationSummary) {
+                        setGeneratingSummary(true)
+                        try {
+                          const summary = threadMessages.map(m => `${m.from}: ${m.body || m.subject || ""}`).join("\n\n")
+                          const response = await fetch("/api/ai/summarize", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ conversation: summary })
+                          })
+                          if (response.ok) {
+                            const data = await response.json()
+                            setConversationSummary(data.summary)
+                            setSummaryExpanded(true)
+                          } else {
+                            setConversationSummary("Unable to generate summary at this time.")
+                            setSummaryExpanded(true)
+                          }
+                        } catch (err) {
+                          setConversationSummary("Error generating summary.")
                           setSummaryExpanded(true)
-                        } else {
-                          setConversationSummary("Unable to generate summary at this time.")
-                          setSummaryExpanded(true)
+                        } finally {
+                          setGeneratingSummary(false)
                         }
-                      } catch (err) {
-                        setConversationSummary("Error generating summary.")
-                        setSummaryExpanded(true)
-                      } finally {
-                        setGeneratingSummary(false)
+                      } else {
+                        setSummaryExpanded(!summaryExpanded)
                       }
-                    } else {
-                      setSummaryExpanded(!summaryExpanded)
-                    }
-                  }}
-                  className="h-8 px-3 text-xs flex-shrink-0"
-                  disabled={generatingSummary}
-                >
-                  {generatingSummary ? (
-                    <>
-                      <Loader2 className="w-3 h-3 mr-1 animate-spin" />
-                      Summarizing...
-                    </>
-                  ) : (
-                    <>
-                      <Sparkles className="w-3 h-3 mr-1" />
-                      {conversationSummary ? (summaryExpanded ? "Hide Summary" : "Show Summary") : "Summarize"}
-                    </>
-                  )}
-                </Button>
-              )}
-            </div>
-            {conversationSummary && summaryExpanded && (
-              <div className="mt-3 p-3 bg-primary/5 border border-primary/20 rounded-md">
-                <div className="flex items-start gap-2">
-                  <Sparkles className="w-4 h-4 text-primary mt-0.5 flex-shrink-0" />
-                  <div className="text-sm text-foreground/90 leading-relaxed">
-                    {conversationSummary}
+                    }}
+                    className="h-8 px-3 text-xs flex-shrink-0"
+                    disabled={generatingSummary}
+                  >
+                    {generatingSummary ? (
+                      <>
+                        <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                        Summarizing...
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles className="w-3 h-3 mr-1" />
+                        {conversationSummary ? (summaryExpanded ? "Hide Summary" : "Show Summary") : "Summarize"}
+                      </>
+                    )}
+                  </Button>
+                )}
+              </div>
+              {conversationSummary && summaryExpanded && (
+                <div className="mt-3 p-3 bg-primary/5 border border-primary/20 rounded-md">
+                  <div className="flex items-start gap-2">
+                    <Sparkles className="w-4 h-4 text-primary mt-0.5 flex-shrink-0" />
+                    <div className="text-sm text-foreground/90 leading-relaxed">
+                      {conversationSummary}
+                    </div>
                   </div>
                 </div>
-              </div>
-            )}
-          </div>
+              )}
+            </div>
 
-          <div className="px-6 py-4">
-            <div className="space-y-6 max-w-full">
-              {threadMessages.length > 0 ? (
-                threadMessages.map((msg, index) => (
-                  <div
-                    key={msg.id}
-                    className="pb-6 border-b border-border last:border-b-0 last:pb-0 overflow-hidden"
-                  >
-                    <div className="flex justify-between items-start gap-4 mb-3 min-w-0">
-                      <div className="flex items-center gap-3 flex-1 min-w-0 overflow-hidden">
-                        {/* Clickable Avatar for Shopify */}
-                        {onToggleShopify && (
-                          <button
-                            onClick={() => onToggleShopify(msg.from)}
-                            className="flex-shrink-0 transition-colors duration-200 cursor-pointer group"
-                            title="View Shopify customer info"
-                          >
-                            <Avatar className="h-10 w-10 border-2 border-border group-hover:border-primary transition-colors">
-                              <AvatarFallback className="bg-primary/10 text-primary font-semibold text-xs">
-                                {msg.from.split("<")[0].trim()
-                                  ? msg.from.split("<")[0].trim()
-                                    .split(" ")
-                                    .map((n) => n[0])
-                                    .join("")
-                                    .slice(0, 2)
-                                    .toUpperCase()
-                                  : msg.from.slice(0, 2).toUpperCase()}
-                              </AvatarFallback>
-                            </Avatar>
-                          </button>
-                        )}
-                        <div className="flex-1 min-w-0 overflow-hidden">
-                          <div className="flex items-center gap-2 mb-1.5 min-w-0">
-                            <div className="text-sm font-semibold text-foreground truncate">
-                              {msg.from.split("<")[0].trim() || msg.from}
+            <div className="px-6 py-4">
+              <div className="space-y-6 max-w-full">
+                {threadMessages.length > 0 ? (
+                  threadMessages.map((msg, index) => (
+                    <div
+                      key={msg.id}
+                      className="pb-6 border-b border-border last:border-b-0 last:pb-0 overflow-hidden"
+                    >
+                      <div className="flex justify-between items-start gap-4 mb-3 min-w-0">
+                        <div className="flex items-center gap-3 flex-1 min-w-0 overflow-hidden">
+                          {/* Clickable Avatar for Client Info */}
+                          {onToggleShopify && (
+                            <button
+                              onClick={() => onToggleShopify(msg.from)}
+                              className="flex-shrink-0 transition-colors duration-200 cursor-pointer group"
+                              title="View Client info"
+                            >
+                              <Avatar className="h-10 w-10 border-2 border-border group-hover:border-primary transition-colors">
+                                <AvatarFallback className="bg-primary/10 text-primary font-semibold text-xs">
+                                  {msg.from.split("<")[0].trim()
+                                    ? msg.from.split("<")[0].trim()
+                                      .split(" ")
+                                      .map((n) => n[0])
+                                      .join("")
+                                      .slice(0, 2)
+                                      .toUpperCase()
+                                    : msg.from.slice(0, 2).toUpperCase()}
+                                </AvatarFallback>
+                              </Avatar>
+                            </button>
+                          )}
+                          <div className="flex-1 min-w-0 overflow-hidden">
+                            <div className="flex items-center gap-2 mb-1.5 min-w-0">
+                              <div className="text-sm font-semibold text-foreground truncate">
+                                {msg.from.split("<")[0].trim() || msg.from}
+                              </div>
+                              {index === 0 && (
+                                <Badge variant="outline" className="text-xs flex-shrink-0">Original</Badge>
+                              )}
                             </div>
-                            {index === 0 && (
-                              <Badge variant="outline" className="text-xs flex-shrink-0">Original</Badge>
-                            )}
-                          </div>
-                          <div className="text-xs text-muted-foreground truncate">
-                            To: {msg.to.split("<")[0].trim() || msg.to}
+                            <div className="text-xs text-muted-foreground truncate">
+                              To: {msg.to.split("<")[0].trim() || msg.to}
+                            </div>
                           </div>
                         </div>
+                        <div className="text-xs text-muted-foreground flex-shrink-0 whitespace-nowrap">
+                          {formatDate(msg.date)}
+                        </div>
                       </div>
-                      <div className="text-xs text-muted-foreground flex-shrink-0 whitespace-nowrap">
-                        {formatDate(msg.date)}
-                      </div>
-                    </div>
-                    <div className="text-sm text-foreground/90 leading-relaxed overflow-hidden break-words">
-                      {msg.body && msg.body.trim() ? (
-                        // Check if it looks like HTML (more comprehensive check)
-                        /<[^>]*(div|p|span|html|table|tr|td|br|img|a|b|i|em|strong|blockquote|pre|code|ul|ol|li|h[1-6])[\s>]/i.test(msg.body) ? (
-                          <div
-                            className="prose prose-sm max-w-none 
-                              prose-headings:font-semibold prose-headings:text-foreground
-                              prose-p:text-foreground prose-p:leading-relaxed
-                              prose-a:text-primary prose-a:no-underline hover:prose-a:underline
-                              prose-ul:text-foreground prose-ol:text-foreground
-                              prose-li:text-foreground prose-li:leading-relaxed
-                              prose-code:text-foreground prose-code:bg-muted prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded
-                              prose-pre:bg-muted prose-pre:text-foreground
-                              prose-blockquote:text-muted-foreground prose-blockquote:border-primary
-                              prose-img:rounded-lg overflow-hidden break-words"
-                            dangerouslySetInnerHTML={{ __html: msg.body }}
-                          />
+                      {/* Dark Mode Text Handling: Check if content is complex HTML requiring isolation */}
+                      <div className="text-sm text-foreground/90 leading-relaxed overflow-hidden break-words w-full">
+                        {msg.body && msg.body.trim() ? (
+                          (/<[^>]+>/.test(msg.body) || /<style|!doctype|{behavior:|font-family:|padding:|margin:|\.shape|\.[a-z0-9\\:-]+\*?\s*{/i.test(msg.body)) ? (
+                            <div className="w-full overflow-hidden">
+                              <EmailContentViewer
+                                content={msg.body}
+                                emailId={msg.id}
+                                attachments={msg.attachments}
+                              />
+                            </div>
+                          ) : (
+                            <div className="whitespace-pre-wrap break-words px-1">
+                              {cleanSnippet(msg.body)}
+                            </div>
+                          )
                         ) : (
-                          <div className="whitespace-pre-wrap break-words">
-                            {msg.body}
+                          <div className="text-muted-foreground italic">
+                            No content
                           </div>
-                        )
-                      ) : (
-                        <div className="text-muted-foreground italic">
-                          No content
+                        )}
+                      </div>
+                      {msg.attachments && msg.attachments.length > 0 && (
+                        <div className="mt-4 pt-4 border-t border-border/50">
+                          <div className="text-xs font-medium text-muted-foreground mb-2">Attachments</div>
+                          <div className="flex flex-wrap gap-2">
+                            {msg.attachments.map((att) => (
+                              <a
+                                key={att.id}
+                                href={`/api/emails/${msg.id}/attachments/${att.id}?filename=${encodeURIComponent(att.filename)}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="flex items-center gap-2 px-3 py-2 bg-muted/50 hover:bg-muted border border-border rounded-lg transition-colors group text-sm no-underline"
+                              >
+                                <div className="p-1.5 bg-background rounded-md border border-border/50 group-hover:border-primary/30 transition-colors">
+                                  <Paperclip className="w-4 h-4 text-primary/70 group-hover:text-primary" />
+                                </div>
+                                <div className="flex flex-col min-w-0">
+                                  <span className="truncate max-w-[200px] text-foreground/90 font-medium">{att.filename}</span>
+                                  <span className="text-xs text-muted-foreground">{(att.size / 1024).toFixed(1)} KB</span>
+                                </div>
+                              </a>
+                            ))}
+                          </div>
                         </div>
                       )}
                     </div>
-                  </div>
-                ))
-              ) : (
-                // Fallback: show emailSummary if we have it but no thread messages yet
-                emailSummary ? (
-                  <div className="pb-4 border-b border-border/50 last:border-b-0">
-                    <div className="flex justify-between items-start gap-3 mb-3">
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 mb-1">
-                          <div className="text-xs font-medium text-muted-foreground">Message</div>
-                          <div className="text-xs font-semibold text-foreground truncate">
-                            {emailSummary.from.split("<")[0].trim() || emailSummary.from}
+                  ))
+                ) : (
+                  // Fallback: show emailSummary if we have it but no thread messages yet
+                  emailSummary ? (
+                    <div className="pb-4 border-b border-border/50 last:border-b-0">
+                      <div className="flex justify-between items-start gap-3 mb-3">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 mb-1">
+                            <div className="text-xs font-medium text-muted-foreground">Message</div>
+                            <div className="text-xs font-semibold text-foreground truncate">
+                              {emailSummary.from.split("<")[0].trim() || emailSummary.from}
+                            </div>
+                          </div>
+                          <div className="text-xs text-muted-foreground truncate">
+                            To: {emailSummary.to.split("<")[0].trim() || emailSummary.to}
                           </div>
                         </div>
-                        <div className="text-xs text-muted-foreground truncate">
-                          To: {emailSummary.to.split("<")[0].trim() || emailSummary.to}
+                        <div className="text-xs text-muted-foreground flex-shrink-0 whitespace-nowrap">
+                          {formatDate(emailSummary.date)}
                         </div>
                       </div>
-                      <div className="text-xs text-muted-foreground flex-shrink-0 whitespace-nowrap">
-                        {formatDate(emailSummary.date)}
-                      </div>
+                      {emailSummary.body && (/<[^>]+>/.test(emailSummary.body) || /<style|!doctype|{behavior:|font-family:|padding:|margin:|\.shape|\.[a-z0-9\\:-]+\*?\s*{/i.test(emailSummary.body)) ? (
+                        <div className="w-full overflow-hidden">
+                          <EmailContentViewer
+                            content={emailSummary.body}
+                            emailId={emailId}
+                            attachments={emailSummary.attachments}
+                          />
+                        </div>
+                      ) : (
+                        <div className="text-sm text-foreground whitespace-pre-wrap break-words leading-relaxed overflow-hidden px-1" style={{ wordBreak: 'break-word', overflowWrap: 'break-word' }}>
+                          {cleanSnippet(emailSummary.body || emailSummary.snippet || "") || "Loading content..."}
+                        </div>
+                      )}
+                      {emailSummary.attachments && emailSummary.attachments.length > 0 && (
+                        <div className="mt-4 pt-4 border-t border-border/50">
+                          <div className="text-xs font-medium text-muted-foreground mb-2">Attachments</div>
+                          <div className="flex flex-wrap gap-2">
+                            {emailSummary.attachments.map((att) => (
+                              <a
+                                key={att.id}
+                                href={`/api/emails/${emailId}/attachments/${att.id}?filename=${encodeURIComponent(att.filename)}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="flex items-center gap-2 px-3 py-2 bg-muted/50 hover:bg-muted border border-border rounded-lg transition-colors group text-sm no-underline"
+                              >
+                                <div className="p-1.5 bg-background rounded-md border border-border/50 group-hover:border-primary/30 transition-colors">
+                                  <Paperclip className="w-4 h-4 text-primary/70 group-hover:text-primary" />
+                                </div>
+                                <div className="flex flex-col min-w-0">
+                                  <span className="truncate max-w-[200px] text-foreground/90 font-medium">{att.filename}</span>
+                                  <span className="text-xs text-muted-foreground">{(att.size / 1024).toFixed(1)} KB</span>
+                                </div>
+                              </a>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </div>
-                    <div className="text-sm text-foreground whitespace-pre-wrap break-words leading-relaxed overflow-hidden" style={{ wordBreak: 'break-word', overflowWrap: 'break-word' }}>
-                      {emailSummary.body || emailSummary.snippet || "Loading content..."}
+                  ) : (
+                    <div className="text-sm text-muted-foreground">Loading content...</div>
+                  )
+                )}
+              </div>
+            </div>
+          </Card>
+
+          {error && (
+            <div className="px-4 py-3 text-sm font-medium text-destructive bg-destructive/10 rounded-lg border border-destructive/20">
+              {error}
+            </div>
+          )}
+
+          {/* Spacer for the fixed footer */}
+          <div className="h-24"></div>
+        </div>
+
+        {/* Persistent Attachment Sidebar */}
+        {allAttachments.length > 0 && (
+          <div className="w-72 hidden 2xl:block border-l border-border bg-card/40 overflow-y-auto p-4 space-y-4">
+            <div className="flex items-center gap-2 text-sm font-semibold text-foreground mb-2">
+              <Paperclip className="w-4 h-4" />
+              Attachments ({allAttachments.length})
+            </div>
+            <div className="space-y-2">
+              {allAttachments.map((att) => (
+                <a
+                  key={att.id}
+                  href={`/api/emails/${att.msgId}/attachments/${att.id}?filename=${encodeURIComponent(att.filename)}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-start gap-3 p-3 rounded-lg border border-border bg-card hover:border-primary/40 hover:shadow-sm transition-all group block no-underline"
+                >
+                  <div className="mt-0.5 p-2 bg-primary/5 rounded-md text-primary group-hover:bg-primary/10 transition-colors">
+                    <Paperclip className="w-4 h-4" />
+                  </div>
+                  <div className="flex-1 min-w-0 overflow-hidden">
+                    <div className="text-sm font-medium text-foreground truncate" title={att.filename}>
+                      {att.filename}
+                    </div>
+                    <div className="text-xs text-muted-foreground mt-0.5 flex items-center gap-2">
+                      <span>{(att.size / 1024).toFixed(1)} KB</span>
+                      <span className="w-1 h-1 rounded-full bg-muted-foreground/30" />
+                      <span className="truncate uppercase text-[10px]">{att.filename.split('.').pop()}</span>
                     </div>
                   </div>
-                ) : (
-                  <div className="text-sm text-muted-foreground">Loading content...</div>
-                )
-              )}
+                </a>
+              ))}
             </div>
           </div>
-        </Card>
-
-        {error && (
-          <div className="mx-4 md:mx-6 mb-3 px-4 py-3 text-sm font-medium text-destructive bg-destructive/10 rounded-lg border border-destructive/20">
-            {error}
-          </div>
         )}
+      </div>
 
-        <Card className="mx-4 md:mx-6 mb-4 shadow-lg">
-          <div className="p-6 space-y-4">
-            {onToggleShopify && emailSummary && (
-              <Button
-                variant={showShopifySidebar ? "default" : "outline"}
-                size="sm"
-                onClick={() => onToggleShopify(emailSummary.from)}
-                className="w-full gap-2"
-              >
-                <ShoppingBag className="w-4 h-4" />
-                {showShopifySidebar ? "Hide" : "Show"} Shopify Info
-              </Button>
-            )}
+      {/* Persistent Footer Actions - Fixed at bottom */}
+      <div className="border-t border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 p-4 md:px-6 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.1)] z-10">
+        <div className="space-y-4 max-w-4xl mx-auto">
+          {onToggleShopify && emailSummary && (
             <Button
-              onClick={handleGenerateDraft}
-              disabled={generating || showDraft}
-              className="w-full h-11 text-base font-semibold shadow-md hover:shadow-lg"
+              variant={showShopifySidebar ? "default" : "outline"}
+              size="sm"
+              onClick={() => onToggleShopify(emailSummary.from)}
+              className="w-full gap-2 transition-all duration-300 hover:scale-[1.01] active:scale-[0.99]"
             >
-              {generating ? (
-                <>
-                  <Loader2 className="w-5 h-5 mr-2 animate-spin" />
-                  Generating draft...
-                </>
-              ) : showDraft ? (
-                <>
-                  <Sparkles className="w-5 h-5 mr-2" />
-                  Draft generated
-                </>
-              ) : (
-                <>
-                  <Sparkles className="w-5 h-5 mr-2" />
-                  Generate AI draft
-                </>
-              )}
+              <User className="w-4 h-4" />
+              {showShopifySidebar ? "Hide" : "Show"} Client Info
             </Button>
+          )}
 
-            {showDraft && (
-              <div className="space-y-4 pt-4 border-t border-border animate-in fade-in slide-in-from-bottom-2 duration-300">
-                <div className="flex items-center justify-between gap-3">
-                  <h3 className="text-base font-semibold text-foreground flex items-center gap-2">
-                    <Sparkles className="w-4 h-4 text-primary" />
-                    AI-Generated Draft
-                  </h3>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setDraftMinimized(!draftMinimized)}
-                    className="h-9 px-3 hover:bg-accent/10"
-                    title={draftMinimized ? "Expand draft" : "Minimize draft"}
-                  >
-                    {draftMinimized ? (
-                      <ChevronDown className="w-4 h-4" />
-                    ) : (
-                      <ChevronUp className="w-4 h-4" />
-                    )}
-                  </Button>
+          <Button
+            onClick={handleGenerateDraft}
+            disabled={generating || showDraft}
+            className="w-full h-11 text-base font-semibold shadow-md transition-all duration-300 hover:shadow-lg hover:translate-y-[-2px] active:translate-y-[0px] bg-gradient-to-r from-primary to-primary/80"
+          >
+            {generating ? (
+              <>
+                <Loader2 className="w-5 h-5 mr-2 animate-spin" />
+                Generating draft...
+              </>
+            ) : showDraft ? (
+              <>
+                <Sparkles className="w-5 h-5 mr-2" />
+                Draft generated
+              </>
+            ) : (
+              <>
+                <Sparkles className="w-5 h-5 mr-2" />
+                Generate AI draft
+              </>
+            )}
+          </Button>
+
+          {showDraft && (
+            <div className="space-y-4 pt-4 border-t border-border animate-in fade-in slide-in-from-bottom-2 duration-300">
+              <div className="flex items-center justify-between gap-3">
+                <h3 className="text-base font-semibold text-foreground flex items-center gap-2">
+                  <Sparkles className="w-4 h-4 text-primary" />
+                  AI-Generated Draft
+                </h3>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setDraftMinimized(!draftMinimized)}
+                  className="h-9 px-3 hover:bg-accent/10"
+                  title={draftMinimized ? "Expand draft" : "Minimize draft"}
+                >
+                  {draftMinimized ? (
+                    <ChevronDown className="w-4 h-4" />
+                  ) : (
+                    <ChevronUp className="w-4 h-4" />
+                  )}
+                </Button>
+              </div>
+              {draftMinimized ? (
+                <div className="text-sm text-muted-foreground italic py-3 px-4 bg-muted/30 rounded-lg border border-border/50">
+                  Draft minimized - click arrow to expand
                 </div>
-                {draftMinimized ? (
-                  <div className="text-sm text-muted-foreground italic py-3 px-4 bg-muted/30 rounded-lg">
-                    Draft minimized - click to expand
-                  </div>
-                ) : (
-                  <div className="space-y-3 animate-in fade-in slide-in-from-top-2 duration-300">
-                    <div className="space-y-2">
-                      <div className="flex flex-wrap gap-1 items-center bg-muted/40 border border-border rounded-lg px-2 py-1.5">
-                        <button type="button" onMouseDown={(e) => e.preventDefault()} className="h-7 w-7 inline-flex items-center justify-center rounded hover:bg-accent" onClick={() => execAndSync(() => applyCommand('bold'))} aria-label="Bold"><Bold className="w-3.5 h-3.5" /></button>
-                        <button type="button" onMouseDown={(e) => e.preventDefault()} className="h-7 w-7 inline-flex items-center justify-center rounded hover:bg-accent" onClick={() => execAndSync(() => applyCommand('italic'))} aria-label="Italic"><Italic className="w-3.5 h-3.5" /></button>
-                        <button type="button" onMouseDown={(e) => e.preventDefault()} className="h-7 w-7 inline-flex items-center justify-center rounded hover:bg-accent" onClick={() => execAndSync(() => applyCommand('underline'))} aria-label="Underline"><Underline className="w-3.5 h-3.5" /></button>
-                        <button type="button" onMouseDown={(e) => e.preventDefault()} className="h-7 w-7 inline-flex items-center justify-center rounded hover:bg-accent" onClick={() => execAndSync(() => applyCommand('strikeThrough'))} aria-label="Strikethrough"><Strikethrough className="w-3.5 h-3.5" /></button>
-                        <button type="button" onMouseDown={(e) => e.preventDefault()} className="h-7 w-7 inline-flex items-center justify-center rounded hover:bg-accent" onClick={toggleHeading} aria-label="Heading"><Type className="w-3.5 h-3.5" /></button>
-                        <button type="button" onMouseDown={(e) => e.preventDefault()} className="h-7 w-7 inline-flex items-center justify-center rounded hover:bg-accent" onClick={() => execAndSync(() => applyCommand('hiliteColor', '#fef08a'))} aria-label="Highlight"><Highlighter className="w-3.5 h-3.5 text-amber-500" /></button>
+              ) : (
+                <div className="space-y-3 animate-in fade-in slide-in-from-top-2 duration-300">
+                  <div className="space-y-2">
+                    <div className="flex flex-wrap gap-1 items-center bg-muted/40 border border-border rounded-lg px-2 py-1.5 shadow-sm">
+                      <button type="button" onMouseDown={(e) => e.preventDefault()} className="h-7 w-7 inline-flex items-center justify-center rounded hover:bg-accent transition-colors" onClick={() => execAndSync(() => applyCommand('bold'))} aria-label="Bold"><Bold className="w-3.5 h-3.5" /></button>
+                      <button type="button" onMouseDown={(e) => e.preventDefault()} className="h-7 w-7 inline-flex items-center justify-center rounded hover:bg-accent transition-colors" onClick={() => execAndSync(() => applyCommand('italic'))} aria-label="Italic"><Italic className="w-3.5 h-3.5" /></button>
+                      <button type="button" onMouseDown={(e) => e.preventDefault()} className="h-7 w-7 inline-flex items-center justify-center rounded hover:bg-accent transition-colors" onClick={() => execAndSync(() => applyCommand('underline'))} aria-label="Underline"><Underline className="w-3.5 h-3.5" /></button>
+                      <button type="button" onMouseDown={(e) => e.preventDefault()} className="h-7 w-7 inline-flex items-center justify-center rounded hover:bg-accent transition-colors" onClick={() => execAndSync(() => applyCommand('strikeThrough'))} aria-label="Strikethrough"><Strikethrough className="w-3.5 h-3.5" /></button>
+                      <button type="button" onMouseDown={(e) => e.preventDefault()} className="h-7 w-7 inline-flex items-center justify-center rounded hover:bg-accent transition-colors" onClick={toggleHeading} aria-label="Heading"><Type className="w-3.5 h-3.5" /></button>
+                      <button type="button" onMouseDown={(e) => e.preventDefault()} className="h-7 w-7 inline-flex items-center justify-center rounded hover:bg-accent transition-colors" onClick={() => execAndSync(() => applyCommand('hiliteColor', '#fef08a'))} aria-label="Highlight"><Highlighter className="w-3.5 h-3.5 text-amber-500" /></button>
 
-                        <div className="w-px h-5 bg-border mx-0.5" />
+                      <div className="w-px h-5 bg-border mx-0.5" />
 
-                        <button type="button" onMouseDown={(e) => e.preventDefault()} className="h-7 w-7 inline-flex items-center justify-center rounded hover:bg-accent" onClick={() => makeListFromSelection(false)} aria-label="Bullet list"><List className="w-3.5 h-3.5" /></button>
-                        <button type="button" onMouseDown={(e) => e.preventDefault()} className="h-7 w-7 inline-flex items-center justify-center rounded hover:bg-accent" onClick={() => makeListFromSelection(true)} aria-label="Numbered list"><ListOrdered className="w-3.5 h-3.5" /></button>
-                        <button type="button" onMouseDown={(e) => e.preventDefault()} className="h-7 w-7 inline-flex items-center justify-center rounded hover:bg-accent" onClick={toggleBlockquote} aria-label="Quote"><Quote className="w-3.5 h-3.5" /></button>
-                        <button type="button" onMouseDown={(e) => e.preventDefault()} className="h-7 w-7 inline-flex items-center justify-center rounded hover:bg-accent" onClick={() => execAndSync(() => applyCommand('justifyLeft'))} aria-label="Align left"><AlignLeft className="w-3.5 h-3.5" /></button>
-                        <button type="button" onMouseDown={(e) => e.preventDefault()} className="h-7 w-7 inline-flex items-center justify-center rounded hover:bg-accent" onClick={() => execAndSync(() => applyCommand('justifyCenter'))} aria-label="Align center"><AlignCenter className="w-3.5 h-3.5" /></button>
-                        <button type="button" onMouseDown={(e) => e.preventDefault()} className="h-7 w-7 inline-flex items-center justify-center rounded hover:bg-accent" onClick={() => execAndSync(() => applyCommand('justifyRight'))} aria-label="Align right"><AlignRight className="w-3.5 h-3.5" /></button>
+                      <button type="button" onMouseDown={(e) => e.preventDefault()} className="h-7 w-7 inline-flex items-center justify-center rounded hover:bg-accent transition-colors" onClick={() => makeListFromSelection(false)} aria-label="Bullet list"><List className="w-3.5 h-3.5" /></button>
+                      <button type="button" onMouseDown={(e) => e.preventDefault()} className="h-7 w-7 inline-flex items-center justify-center rounded hover:bg-accent transition-colors" onClick={() => makeListFromSelection(true)} aria-label="Numbered list"><ListOrdered className="w-3.5 h-3.5" /></button>
+                      <button type="button" onMouseDown={(e) => e.preventDefault()} className="h-7 w-7 inline-flex items-center justify-center rounded hover:bg-accent transition-colors" onClick={toggleBlockquote} aria-label="Quote"><Quote className="w-3.5 h-3.5" /></button>
+                      <button type="button" onMouseDown={(e) => e.preventDefault()} className="h-7 w-7 inline-flex items-center justify-center rounded hover:bg-accent transition-colors" onClick={() => execAndSync(() => applyCommand('justifyLeft'))} aria-label="Align left"><AlignLeft className="w-3.5 h-3.5" /></button>
+                      <button type="button" onMouseDown={(e) => e.preventDefault()} className="h-7 w-7 inline-flex items-center justify-center rounded hover:bg-accent transition-colors" onClick={() => execAndSync(() => applyCommand('justifyCenter'))} aria-label="Align center"><AlignCenter className="w-3.5 h-3.5" /></button>
+                      <button type="button" onMouseDown={(e) => e.preventDefault()} className="h-7 w-7 inline-flex items-center justify-center rounded hover:bg-accent transition-colors" onClick={() => execAndSync(() => applyCommand('justifyRight'))} aria-label="Align right"><AlignRight className="w-3.5 h-3.5" /></button>
 
-                        <div className="w-px h-5 bg-border mx-0.5" />
+                      <div className="w-px h-5 bg-border mx-0.5" />
 
-                        <button type="button" onMouseDown={(e) => e.preventDefault()} className="h-7 w-7 inline-flex items-center justify-center rounded hover:bg-accent" onClick={handleInsertLink} aria-label="Insert link"><LinkIcon className="w-3.5 h-3.5" /></button>
-                        <button type="button" onMouseDown={(e) => e.preventDefault()} className="h-7 w-7 inline-flex items-center justify-center rounded hover:bg-accent" onClick={() => execAndSync(() => applyCommand('insertHTML', '<code></code>'))} aria-label="Inline code"><Code className="w-3.5 h-3.5" /></button>
-                        <button type="button" onMouseDown={(e) => e.preventDefault()} className="h-7 w-7 inline-flex items-center justify-center rounded hover:bg-accent" onClick={() => imageInputRef.current?.click()} aria-label="Inline image"><ImageIcon className="w-3.5 h-3.5" /></button>
-                        <button type="button" onMouseDown={(e) => e.preventDefault()} className="h-7 w-7 inline-flex items-center justify-center rounded hover:bg-accent" onClick={() => fileInputRef.current?.click()} aria-label="Attach file"><Paperclip className="w-3.5 h-3.5" /></button>
+                      <button type="button" onMouseDown={(e) => e.preventDefault()} className="h-7 w-7 inline-flex items-center justify-center rounded hover:bg-accent transition-colors" onClick={handleInsertLink} aria-label="Insert link"><LinkIcon className="w-3.5 h-3.5" /></button>
+                      <button type="button" onMouseDown={(e) => e.preventDefault()} className="h-7 w-7 inline-flex items-center justify-center rounded hover:bg-accent transition-colors" onClick={() => execAndSync(() => applyCommand('insertHTML', '<code></code>'))} aria-label="Inline code"><Code className="w-3.5 h-3.5" /></button>
+                      <button type="button" onMouseDown={(e) => e.preventDefault()} className="h-7 w-7 inline-flex items-center justify-center rounded hover:bg-accent transition-colors" onClick={() => imageInputRef.current?.click()} aria-label="Inline image"><ImageIcon className="w-3.5 h-3.5" /></button>
+                      <button type="button" onMouseDown={(e) => e.preventDefault()} className="h-7 w-7 inline-flex items-center justify-center rounded hover:bg-accent transition-colors" onClick={() => fileInputRef.current?.click()} aria-label="Attach file"><Paperclip className="w-3.5 h-3.5" /></button>
 
-                        <div className="w-px h-5 bg-border mx-0.5" />
+                      <div className="w-px h-5 bg-border mx-0.5" />
 
-                        <button type="button" onMouseDown={(e) => e.preventDefault()} className="h-7 px-2.5 inline-flex items-center justify-center rounded hover:bg-accent text-xs font-medium" onClick={handleClearFormatting} aria-label="Clear formatting">Clear</button>
-                      </div>
-                      <input ref={fileInputRef} type="file" multiple className="hidden" onChange={(e) => handleAttachFiles(e.target.files)} />
-                      <input ref={imageInputRef} type="file" accept="image/*" className="hidden" onChange={(e) => handleInsertInlineImage(e.target.files)} />
-                      <div className="relative">
-                        {linkInputOpen && linkDialogPosition && (
-                          <div
-                            ref={linkDialogRef}
-                            className="absolute z-50 bg-popover border border-border rounded-md p-1.5 shadow-md text-xs"
-                            style={{
-                              top: `${linkDialogPosition.top}px`,
-                              left: `${linkDialogPosition.left}px`,
-                              minWidth: '280px',
-                              maxWidth: '320px'
-                            }}
-                          >
-                            <div className="space-y-1">
-                              {linkHasSelection && linkTextValue && (
-                                <div className="text-[9px] text-muted-foreground px-1 pb-0.5">
-                                  <span className="font-medium">Selected:</span> "{linkTextValue}"
-                                </div>
-                              )}
+                      <button type="button" onMouseDown={(e) => e.preventDefault()} className="h-7 px-2.5 inline-flex items-center justify-center rounded hover:bg-accent text-xs font-medium transition-colors" onClick={handleClearFormatting} aria-label="Clear formatting">Clear</button>
+                    </div>
+                    <input ref={fileInputRef} type="file" multiple className="hidden" onChange={(e) => handleAttachFiles(e.target.files)} />
+                    <input ref={imageInputRef} type="file" accept="image/*" className="hidden" onChange={(e) => handleInsertInlineImage(e.target.files)} />
+                    <div className="relative">
+                      {linkInputOpen && linkDialogPosition && (
+                        <div
+                          ref={linkDialogRef}
+                          className="absolute z-50 bg-popover border border-border rounded-md p-1.5 shadow-md text-xs"
+                          style={{
+                            top: `${linkDialogPosition.top}px`,
+                            left: `${linkDialogPosition.left}px`,
+                            minWidth: '280px',
+                            maxWidth: '320px'
+                          }}
+                        >
+                          <div className="space-y-1">
+                            {linkHasSelection && linkTextValue && (
+                              <div className="text-[9px] text-muted-foreground px-1 pb-0.5">
+                                <span className="font-medium">Selected:</span> "{linkTextValue}"
+                              </div>
+                            )}
+                            <Input
+                              id="link-input-inline"
+                              value={linkInputValue}
+                              onChange={(e) => setLinkInputValue(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter' && linkInputValue.trim()) {
+                                  e.preventDefault()
+                                  applyLink()
+                                } else if (e.key === 'Escape') {
+                                  setLinkInputOpen(false)
+                                  setLinkInputValue("")
+                                  setLinkTextValue("")
+                                  setLinkDialogPosition(null)
+                                }
+                              }}
+                              placeholder="URL"
+                              className="h-7 text-xs px-2"
+                            />
+                            {!linkHasSelection && (
                               <Input
-                                id="link-input-inline"
-                                value={linkInputValue}
-                                onChange={(e) => setLinkInputValue(e.target.value)}
+                                id="link-text-inline"
+                                value={linkTextValue}
+                                onChange={(e) => setLinkTextValue(e.target.value)}
                                 onKeyDown={(e) => {
                                   if (e.key === 'Enter' && linkInputValue.trim()) {
                                     e.preventDefault()
@@ -1302,168 +1478,148 @@ export default function EmailDetail({ emailId, onDraftGenerated, onBack, initial
                                     setLinkDialogPosition(null)
                                   }
                                 }}
-                                placeholder="URL"
+                                placeholder="Text (optional)"
                                 className="h-7 text-xs px-2"
                               />
-                              {!linkHasSelection && (
-                                <Input
-                                  id="link-text-inline"
-                                  value={linkTextValue}
-                                  onChange={(e) => setLinkTextValue(e.target.value)}
-                                  onKeyDown={(e) => {
-                                    if (e.key === 'Enter' && linkInputValue.trim()) {
-                                      e.preventDefault()
-                                      applyLink()
-                                    } else if (e.key === 'Escape') {
-                                      setLinkInputOpen(false)
-                                      setLinkInputValue("")
-                                      setLinkTextValue("")
-                                      setLinkDialogPosition(null)
-                                    }
-                                  }}
-                                  placeholder="Text (optional)"
-                                  className="h-7 text-xs px-2"
-                                />
-                              )}
-                              <div className="flex items-center gap-1">
-                                <Button size="sm" onClick={applyLink} disabled={!linkInputValue.trim()} className="flex-1 h-6 text-[11px] px-2">
-                                  Insert
-                                </Button>
-                                <Button size="sm" variant="ghost" onClick={() => { setLinkInputOpen(false); setLinkInputValue(""); setLinkTextValue(""); setLinkDialogPosition(null) }} className="h-6 text-[11px] px-2">
-                                  Cancel
-                                </Button>
-                              </div>
+                            )}
+                            <div className="flex items-center gap-1">
+                              <Button size="sm" onClick={applyLink} disabled={!linkInputValue.trim()} className="flex-1 h-6 text-[11px] px-2">
+                                Insert
+                              </Button>
+                              <Button size="sm" variant="ghost" onClick={() => { setLinkInputOpen(false); setLinkInputValue(""); setLinkTextValue(""); setLinkDialogPosition(null) }} className="h-6 text-[11px] px-2">
+                                Cancel
+                              </Button>
                             </div>
                           </div>
-                        )}
-                        <div
-                          ref={editorRef}
-                          contentEditable
-                          suppressContentEditableWarning
-                          onClick={(e) => {
-                            // Clear selection when clicking on empty area (not on text)
-                            const target = e.target as HTMLElement
-                            if (target === editorRef.current) {
-                              const sel = window.getSelection()
-                              sel?.removeAllRanges()
+                        </div>
+                      )}
+                      <div
+                        ref={editorRef}
+                        contentEditable
+                        suppressContentEditableWarning
+                        onClick={(e) => {
+                          // Clear selection when clicking on empty area (not on text)
+                          const target = e.target as HTMLElement
+                          if (target === editorRef.current) {
+                            const sel = window.getSelection()
+                            sel?.removeAllRanges()
+                          }
+                        }}
+                        onInput={handleEditorInput}
+                        onPaste={(e) => {
+                          e.preventDefault()
+                          const text = e.clipboardData.getData('text/plain')
+                          execAndSync(() => {
+                            if (!document.execCommand('insertText', false, text)) {
+                              document.execCommand('insertHTML', false, text)
                             }
-                          }}
-                          onInput={handleEditorInput}
-                          onPaste={(e) => {
+                          })
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Escape') {
+                            setDraftMinimized(true)
                             e.preventDefault()
-                            const text = e.clipboardData.getData('text/plain')
-                            execAndSync(() => {
-                              if (!document.execCommand('insertText', false, text)) {
-                                document.execCommand('insertHTML', false, text)
-                              }
-                            })
-                          }}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Escape') {
-                              setDraftMinimized(true)
+                          }
+                          if ((e.key === 'Backspace' || e.key === 'Delete') && typeof window !== 'undefined') {
+                            const sel = window.getSelection()
+                            const node = sel?.anchorNode as HTMLElement | null
+                            const img = node?.nodeType === 1 ? (node as HTMLElement).closest('img') : node?.parentElement?.closest('img')
+                            if (img) {
                               e.preventDefault()
+                              execAndSync(() => img.remove())
+                              return
                             }
-                            if ((e.key === 'Backspace' || e.key === 'Delete') && typeof window !== 'undefined') {
-                              const sel = window.getSelection()
-                              const node = sel?.anchorNode as HTMLElement | null
-                              const img = node?.nodeType === 1 ? (node as HTMLElement).closest('img') : node?.parentElement?.closest('img')
-                              if (img) {
-                                e.preventDefault()
-                                execAndSync(() => img.remove())
-                                return
-                              }
-                            }
-                            handleEditorShortcut(e)
-                          }}
-                          className="w-full min-h-[200px] max-h-[300px] overflow-y-auto p-4 border-2 border-border rounded-xl bg-background text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary transition-all duration-200 prose prose-sm max-w-none prose-img:max-w-full prose-img:max-h-96"
-                          aria-label="Email draft editor"
-                        />
-                        {autoSaving && (
-                          <div className="text-xs text-muted-foreground bg-background/90 px-2 py-1 rounded shadow-sm border border-border absolute top-3 right-3 pointer-events-none select-none">
-                            Saving...
-                          </div>
-                        )}
-                        {attachments.length > 0 && (
-                          <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
-                            {attachments.map(att => (
-                              <div key={att.id} className="flex items-center gap-2 px-3 py-1 rounded-full border border-border bg-muted/40">
-                                <Paperclip className="w-3 h-3" />
-                                <span>{att.name}</span>
-                                <button type="button" onClick={() => setAttachments(prev => prev.filter(a => a.id !== att.id))} className="text-xs text-foreground hover:text-destructive">✕</button>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
+                          }
+                          handleEditorShortcut(e)
+                        }}
+                        className="w-full min-h-[200px] max-h-[300px] overflow-y-auto p-4 border-2 border-border rounded-xl bg-background text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary transition-all duration-200 prose prose-sm max-w-none prose-img:max-w-full prose-img:max-h-96"
+                        aria-label="Email draft editor"
+                      />
+                      {autoSaving && (
+                        <div className="text-xs text-muted-foreground bg-background/90 px-2 py-1 rounded shadow-sm border border-border absolute top-3 right-3 pointer-events-none select-none">
+                          Saving...
+                        </div>
+                      )}
+                      {attachments.length > 0 && (
+                        <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
+                          {attachments.map(att => (
+                            <div key={att.id} className="flex items-center gap-2 px-3 py-1 rounded-full border border-border bg-muted/40">
+                              <Paperclip className="w-3 h-3" />
+                              <span>{att.name}</span>
+                              <button type="button" onClick={() => setAttachments(prev => prev.filter(a => a.id !== att.id))} className="text-xs text-foreground hover:text-destructive">✕</button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   </div>
-                )}
+                </div>
+              )}
 
-                {!draftMinimized && (
-                  <div className="space-y-3 animate-in fade-in slide-in-from-bottom-2 duration-300">
-                    <div className="flex items-center gap-2">
+              {!draftMinimized && (
+                <div className="space-y-3 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                  <div className="flex items-center gap-2">
+                    <Button
+                      onClick={() => handleSendReply()}
+                      disabled={sending || sendSuccess}
+                      className={`flex-1 h-10 text-sm font-semibold shadow-md transition-all duration-300 ease-out hover:shadow-lg disabled:cursor-not-allowed ${sendSuccess
+                        ? "bg-green-600 text-white hover:bg-green-600"
+                        : "disabled:opacity-50"
+                        }`}
+                    >
+                      {sendingAction === 'send' ? (
+                        <>
+                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                          Sending...
+                        </>
+                      ) : sendSuccess ? (
+                        "✓ Reply sent!"
+                      ) : (
+                        "Send Reply"
+                      )}
+                    </Button>
+                    {ticketId && !hideCloseButton && (
                       <Button
-                        onClick={() => handleSendReply()}
+                        variant="secondary"
+                        onClick={() => handleSendReply({ closeTicket: true })}
                         disabled={sending || sendSuccess}
-                        className={`flex-1 h-10 text-sm font-semibold shadow-md transition-all duration-300 ease-out hover:shadow-lg disabled:cursor-not-allowed ${sendSuccess
-                            ? "bg-green-600 text-white hover:bg-green-600"
-                            : "disabled:opacity-50"
-                          }`}
+                        className="flex-1 h-10 text-sm font-semibold shadow-md transition-all duration-300 ease-out hover:shadow-lg disabled:cursor-not-allowed disabled:opacity-50"
                       >
-                        {sendingAction === 'send' ? (
+                        {sendingAction === 'send-close' ? (
                           <>
                             <Loader2 className="w-4 h-4 mr-2 animate-spin" />
                             Sending...
                           </>
                         ) : sendSuccess ? (
-                          "✓ Reply sent!"
+                          "✓ Sent & Closed!"
                         ) : (
-                          "Send Reply"
+                          "Send & Close"
                         )}
                       </Button>
-                      {ticketId && !hideCloseButton && (
-                        <Button
-                          variant="secondary"
-                          onClick={() => handleSendReply({ closeTicket: true })}
-                          disabled={sending || sendSuccess}
-                          className="flex-1 h-10 text-sm font-semibold shadow-md transition-all duration-300 ease-out hover:shadow-lg disabled:cursor-not-allowed disabled:opacity-50"
-                        >
-                          {sendingAction === 'send-close' ? (
-                            <>
-                              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                              Sending...
-                            </>
-                          ) : sendSuccess ? (
-                            "✓ Sent & Closed!"
-                          ) : (
-                            "Send & Close"
-                          )}
-                        </Button>
-                      )}
-                    </div>
-                    <div className="grid grid-cols-2 gap-3">
-                      <Button
-                        onClick={handleCopy}
-                        variant="outline"
-                        className="h-10 text-sm font-medium hover:bg-accent/10 hover:border-primary/50 transition-all duration-200"
-                      >
-                        {copied ? "✓ Copied!" : "Copy Draft"}
-                      </Button>
-                      <Button
-                        onClick={handleRegenerate}
-                        variant="outline"
-                        disabled={generating}
-                        className="h-10 text-sm font-medium hover:bg-accent/10 hover:border-primary/50 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        {generating ? "Regenerating..." : "Regenerate"}
-                      </Button>
-                    </div>
+                    )}
                   </div>
-                )}
-              </div>
-            )}
-          </div>
-        </Card>
+                  <div className="grid grid-cols-2 gap-3">
+                    <Button
+                      onClick={handleCopy}
+                      variant="outline"
+                      className="h-10 text-sm font-medium hover:bg-accent/10 hover:border-primary/50 transition-all duration-200"
+                    >
+                      {copied ? "✓ Copied!" : "Copy Draft"}
+                    </Button>
+                    <Button
+                      onClick={handleRegenerate}
+                      variant="outline"
+                      disabled={generating}
+                      className="h-10 text-sm font-medium hover:bg-accent/10 hover:border-primary/50 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {generating ? "Regenerating..." : "Regenerate"}
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   )

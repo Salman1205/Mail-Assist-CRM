@@ -5,6 +5,7 @@
 import { NextResponse } from 'next/server';
 import { getValidTokens } from '@/lib/token-refresh';
 import { getUserProfile } from '@/lib/gmail';
+import { cookies } from 'next/headers';
 
 export async function GET() {
   try {
@@ -22,7 +23,20 @@ export async function GET() {
       });
     }
 
-    // 2. Fall back to Gmail tokens (legacy flow)
+    // 2. Check for CRM admin user (hardcoded admin mode)
+    const cookieStore = await cookies();
+    const userId = cookieStore.get('current_user_id')?.value;
+    if (userId === '00000000-0000-0000-0000-000000000001') {
+      return NextResponse.json({
+        emailAddress: 'admin@crm.local',
+        displayName: 'CRM Admin',
+        picture: null,
+        role: 'admin',
+        businessName: 'CRM'
+      });
+    }
+
+    // 3. Fall back to Gmail tokens (legacy flow)
     const tokens = await getValidTokens();
 
     if (!tokens || !tokens.access_token) {

@@ -17,7 +17,7 @@ import { generateOTP, generateToken, generateOTPExpiry } from '@/lib/auth-utils'
 import { sendEmail } from '@/lib/email-service'
 
 const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 )
 

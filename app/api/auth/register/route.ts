@@ -25,7 +25,7 @@ import { sendEmail } from '@/lib/email-service'
 import { validateAccountType } from '@/lib/account-type-utils'
 
 const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 )
 

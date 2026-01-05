@@ -146,17 +146,16 @@ export default function EmailDetail({ emailId, onDraftGenerated, onBack, initial
       .catch(() => setCurrentUserId(null))
   }, [])
 
-  // Auto-scroll to top when emailId changes
+  // Scroll to top of email detail when emailId changes and clear old thread messages
   useEffect(() => {
-    // Find the scrollable container - in this layout it's likely the Card content or the window/main area depending on layout
-    // Given the structure, we can try to scroll the Card's content area if it has a ref, or just the window
-    // But looking at the layout, it seems the page scrolls. Let's try window scroll and also try to find a main scroll area.
-    window.scrollTo(0, 0);
+    // Clear old thread messages immediately to prevent flash of old content
+    setThreadMessages([]);
 
-    // Also try to scroll the specific container if it exists
-    const mainContent = document.querySelector('.overflow-y-auto');
-    if (mainContent) {
-      mainContent.scrollTop = 0;
+    // Only scroll the email detail container to top, NOT the email list or window
+    // Find the email detail container specifically (it has the .overflow-y-auto inside the flex-1)
+    const emailDetailContainer = document.querySelector('[data-email-detail-scroll]');
+    if (emailDetailContainer) {
+      emailDetailContainer.scrollTop = 0;
     }
   }, [emailId]);
 
@@ -1050,7 +1049,7 @@ export default function EmailDetail({ emailId, onDraftGenerated, onBack, initial
       <div className="flex-1 flex overflow-hidden min-h-0">
 
         {/* Scrollable Thread Content */}
-        <div className="flex-1 overflow-y-auto overflow-x-hidden p-4 md:p-6 space-y-4">
+        <div data-email-detail-scroll className="flex-1 overflow-y-auto overflow-x-hidden p-4 md:p-6 space-y-4">
           {/* Email Content Card */}
           <Card className={`flex flex-col overflow-hidden max-w-full shadow-lg ${showDraft && !draftMinimized ? 'flex-shrink-0' : 'flex-1'} min-h-[500px]`}>
             <div className="px-6 py-5 border-b border-border flex-shrink-0 overflow-hidden bg-card">
@@ -1192,30 +1191,7 @@ export default function EmailDetail({ emailId, onDraftGenerated, onBack, initial
                           </div>
                         )}
                       </div>
-                      {msg.attachments && msg.attachments.length > 0 && (
-                        <div className="mt-4 pt-4 border-t border-border/50">
-                          <div className="text-xs font-medium text-muted-foreground mb-2">Attachments</div>
-                          <div className="flex flex-wrap gap-2">
-                            {msg.attachments.map((att) => (
-                              <a
-                                key={att.id}
-                                href={`/api/emails/${msg.id}/attachments/${att.id}?filename=${encodeURIComponent(att.filename)}`}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="flex items-center gap-2 px-3 py-2 bg-muted/50 hover:bg-muted border border-border rounded-lg transition-colors group text-sm no-underline"
-                              >
-                                <div className="p-1.5 bg-background rounded-md border border-border/50 group-hover:border-primary/30 transition-colors">
-                                  <Paperclip className="w-4 h-4 text-primary/70 group-hover:text-primary" />
-                                </div>
-                                <div className="flex flex-col min-w-0">
-                                  <span className="truncate max-w-[200px] text-foreground/90 font-medium">{att.filename}</span>
-                                  <span className="text-xs text-muted-foreground">{(att.size / 1024).toFixed(1)} KB</span>
-                                </div>
-                              </a>
-                            ))}
-                          </div>
-                        </div>
-                      )}
+                      {/* Attachments removed to avoid duplication - moved to footer */}
                     </div>
                   ))
                 ) : (
@@ -1251,30 +1227,7 @@ export default function EmailDetail({ emailId, onDraftGenerated, onBack, initial
                           {cleanSnippet(emailSummary.body || emailSummary.snippet || "") || "Loading content..."}
                         </div>
                       )}
-                      {emailSummary.attachments && emailSummary.attachments.length > 0 && (
-                        <div className="mt-4 pt-4 border-t border-border/50">
-                          <div className="text-xs font-medium text-muted-foreground mb-2">Attachments</div>
-                          <div className="flex flex-wrap gap-2">
-                            {emailSummary.attachments.map((att) => (
-                              <a
-                                key={att.id}
-                                href={`/api/emails/${emailId}/attachments/${att.id}?filename=${encodeURIComponent(att.filename)}`}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="flex items-center gap-2 px-3 py-2 bg-muted/50 hover:bg-muted border border-border rounded-lg transition-colors group text-sm no-underline"
-                              >
-                                <div className="p-1.5 bg-background rounded-md border border-border/50 group-hover:border-primary/30 transition-colors">
-                                  <Paperclip className="w-4 h-4 text-primary/70 group-hover:text-primary" />
-                                </div>
-                                <div className="flex flex-col min-w-0">
-                                  <span className="truncate max-w-[200px] text-foreground/90 font-medium">{att.filename}</span>
-                                  <span className="text-xs text-muted-foreground">{(att.size / 1024).toFixed(1)} KB</span>
-                                </div>
-                              </a>
-                            ))}
-                          </div>
-                        </div>
-                      )}
+                      {/* Attachments removed to avoid duplication - moved to footer */}
                     </div>
                   ) : (
                     <div className="text-sm text-muted-foreground">Loading content...</div>
@@ -1294,45 +1247,45 @@ export default function EmailDetail({ emailId, onDraftGenerated, onBack, initial
           <div className="h-24"></div>
         </div>
 
-        {/* Persistent Attachment Sidebar */}
-        {allAttachments.length > 0 && (
-          <div className="w-72 hidden 2xl:block border-l border-border bg-card/40 overflow-y-auto p-4 space-y-4">
-            <div className="flex items-center gap-2 text-sm font-semibold text-foreground mb-2">
-              <Paperclip className="w-4 h-4" />
-              Attachments ({allAttachments.length})
-            </div>
-            <div className="space-y-2">
-              {allAttachments.map((att) => (
-                <a
-                  key={att.id}
-                  href={`/api/emails/${att.msgId}/attachments/${att.id}?filename=${encodeURIComponent(att.filename)}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-start gap-3 p-3 rounded-lg border border-border bg-card hover:border-primary/40 hover:shadow-sm transition-all group block no-underline"
-                >
-                  <div className="mt-0.5 p-2 bg-primary/5 rounded-md text-primary group-hover:bg-primary/10 transition-colors">
-                    <Paperclip className="w-4 h-4" />
-                  </div>
-                  <div className="flex-1 min-w-0 overflow-hidden">
-                    <div className="text-sm font-medium text-foreground truncate" title={att.filename}>
-                      {att.filename}
-                    </div>
-                    <div className="text-xs text-muted-foreground mt-0.5 flex items-center gap-2">
-                      <span>{(att.size / 1024).toFixed(1)} KB</span>
-                      <span className="w-1 h-1 rounded-full bg-muted-foreground/30" />
-                      <span className="truncate uppercase text-[10px]">{att.filename.split('.').pop()}</span>
-                    </div>
-                  </div>
-                </a>
-              ))}
-            </div>
-          </div>
-        )}
+        {/* Persistent Attachment Sidebar - MOVED TO FOOTER */}
       </div>
 
       {/* Persistent Footer Actions - Fixed at bottom */}
       <div className="border-t border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 p-4 md:px-6 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.1)] z-10">
         <div className="space-y-4 max-w-4xl mx-auto">
+          {/* Attachments List */}
+          {allAttachments.length > 0 && (
+            <div className="mb-4 space-y-2">
+              <div className="flex items-center gap-2 text-sm font-semibold text-foreground mb-2">
+                <Paperclip className="w-4 h-4" />
+                Attachments ({allAttachments.length})
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {allAttachments.map((att) => (
+                  <a
+                    key={att.id}
+                    href={`/api/emails/${att.msgId}/attachments/${att.id}?filename=${encodeURIComponent(att.filename)}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-2 px-3 py-2 bg-muted/50 hover:bg-muted border border-border rounded-lg transition-colors group text-sm no-underline"
+                  >
+                    <div className="p-1.5 bg-background rounded-md border border-border/50 group-hover:border-primary/30 transition-colors">
+                      <Paperclip className="w-4 h-4 text-primary/70 group-hover:text-primary" />
+                    </div>
+                    <div className="flex flex-col min-w-0">
+                      <span className="font-medium text-foreground truncate max-w-[150px]" title={att.filename}>
+                        {att.filename}
+                      </span>
+                      <span className="text-[10px] text-muted-foreground">
+                        {(att.size / 1024).toFixed(1)} KB
+                      </span>
+                    </div>
+                  </a>
+                ))}
+              </div>
+            </div>
+          )}
+
           {onToggleShopify && emailSummary && (
             <Button
               variant={showShopifySidebar ? "default" : "outline"}
@@ -1347,8 +1300,9 @@ export default function EmailDetail({ emailId, onDraftGenerated, onBack, initial
 
           <Button
             onClick={handleGenerateDraft}
-            disabled={generating || showDraft}
+            disabled={true || generating || showDraft}
             className="w-full h-11 text-base font-semibold shadow-md transition-all duration-300 hover:shadow-lg hover:translate-y-[-2px] active:translate-y-[0px] bg-gradient-to-r from-primary to-primary/80"
+            title="AI Draft generation temporarily disabled"
           >
             {generating ? (
               <>

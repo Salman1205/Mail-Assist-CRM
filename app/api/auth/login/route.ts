@@ -19,7 +19,7 @@ import { validateLoginInput, verifyPassword, generateSession } from '@/lib/auth-
 import { cookies } from 'next/headers'
 
 const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 )
 
@@ -206,7 +206,7 @@ export async function POST(req: NextRequest) {
     // Set session token
     cookieStore.set('session_token', sessionToken, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
+      secure: process.env.NODE_ENV === 'production' && process.env.NEXT_PUBLIC_APP_URL?.startsWith('https'),
       sameSite: 'lax',
       maxAge: 30 * 24 * 60 * 60, // 30 days
       path: '/',
@@ -215,7 +215,7 @@ export async function POST(req: NextRequest) {
     // Set current_user_id (CRITICAL: Must match CURRENT_USER_ID_COOKIE_NAME in lib/session.ts)
     cookieStore.set('current_user_id', targetUser.id, {
       httpOnly: false, // Accessible to client-side
-      secure: process.env.NODE_ENV === 'production',
+      secure: process.env.NODE_ENV === 'production' && process.env.NEXT_PUBLIC_APP_URL?.startsWith('https'),
       sameSite: 'lax',
       maxAge: 30 * 24 * 60 * 60,
       path: '/',
@@ -225,7 +225,7 @@ export async function POST(req: NextRequest) {
     // This is required for getSessionUserEmailFromRequest to work
     cookieStore.set('gmail_user_email', targetUser.email || targetUser.user_email, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
+      secure: process.env.NODE_ENV === 'production' && process.env.NEXT_PUBLIC_APP_URL?.startsWith('https'),
       sameSite: 'lax',
       maxAge: 30 * 24 * 60 * 60,
       path: '/',

@@ -50,8 +50,26 @@ export async function GET(
       );
     }
 
-    // 1. Try to fetch from Supabase 'emails' table (local sync)
-    // This is the fastest method if data is synced
+    // 1. For CRM tickets (numeric threadId), fetch from MySQL FIRST to get attachments
+    // This is critical because Supabase doesn't store attachment data
+    if (/^\d+$/.test(ticket.threadId)) {
+      try {
+        const { getCrmEmailById } = await import('@/lib/crm-email-provider');
+        const email = await getCrmEmailById(ticket.threadId);
+
+        if (email) {
+          console.log(`[Thread API] Fetched CRM email ${ticket.threadId} with ${email.attachments?.length || 0} attachments`);
+          return NextResponse.json({
+            messages: [email]
+          });
+        }
+      } catch (dbError) {
+        console.warn('Failed to fetch from CRM DB:', dbError);
+      }
+    }
+
+    // 2. Try to fetch from Supabase 'emails' table (local sync)
+    // This is used for non-CRM emails or as a fallback
     try {
       const { supabase } = await import('@/lib/supabase');
       if (supabase) {
@@ -80,23 +98,6 @@ export async function GET(
       }
     } catch (localError) {
       console.warn('Failed to fetch from Supabase emails table:', localError);
-    }
-
-    // 2. Try to fetch from CRM database (MySQL)
-    try {
-      // If threadId is numeric, it's a CRM ticket - prioritize MySQL for full content and attachments
-      if (/^\d+$/.test(ticket.threadId)) {
-        const { getCrmEmailById } = await import('@/lib/crm-email-provider');
-        const email = await getCrmEmailById(ticket.threadId);
-
-        if (email) {
-          return NextResponse.json({
-            messages: [email]
-          });
-        }
-      }
-    } catch (dbError) {
-      console.warn('Failed to fetch from CRM DB, falling back to Gmail check:', dbError);
     }
 
     // Fallback to Gmail if not found in CRM DB (legacy support)

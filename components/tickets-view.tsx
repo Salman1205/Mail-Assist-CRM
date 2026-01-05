@@ -10,7 +10,7 @@ import { Input } from "@/components/ui/input"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Label } from "@/components/ui/label"
-import { Loader2, User, Mail, Clock, Tag, Search, Filter, RefreshCw, RefreshCcw, MoreVertical, Paperclip, MessageSquare, Sparkles, ChevronDown, ChevronUp, Plus, X, Send, Trash2, Edit2, Check, ArrowLeft, ArrowRight, Download, Eye, FileText, CheckCircle2, XCircle, Inbox, ChevronRight, Building2 } from "lucide-react"
+import { Loader2, User, Mail, Clock, Tag, Search, Filter, RefreshCw, RefreshCcw, MoreVertical, Paperclip, MessageSquare, Sparkles, ChevronDown, ChevronUp, Plus, X, Send, Trash2, Edit2, Check, ArrowLeft, ArrowRight, Download, Eye, FileText, CheckCircle2, XCircle, Inbox, ChevronRight, Building2, Archive } from "lucide-react"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Switch } from "@/components/ui/switch"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -46,6 +46,7 @@ interface Ticket {
   ownerEmail?: string
   userEmail?: string
   lastViewedAt?: string | null
+  sourceStatus?: "active" | "archived_external"
 }
 
 interface User {
@@ -536,38 +537,70 @@ export default function TicketsView({ currentUserId, currentUserRole, globalSear
     try {
       if (!silent) setLoading(true)
       setError(null)
-      console.log('[Tickets] Fetching tickets...')
+      console.log('[Tickets] Fetching tickets and CRM emails for sync...')
       const timestamp = Date.now()
-      let url = `/api/tickets?_=${timestamp}`
+      let ticketsUrl = `/api/tickets?_=${timestamp}`
       if (selectedAccount !== 'all') {
-        url += `&account=${encodeURIComponent(selectedAccount)}`
+        ticketsUrl += `&account=${encodeURIComponent(selectedAccount)}`
       }
 
-      const response = await fetch(url, {
-        cache: "no-store",
-        headers: {
-          'Cache-Control': 'no-cache, no-store, must-revalidate',
-          'Pragma': 'no-cache'
-        }
-      })
-      if (!response.ok) {
+      // Fetch both tickets and inbox emails in parallel
+      const [ticketsResponse, emailsResponse] = await Promise.all([
+        fetch(ticketsUrl, {
+          cache: "no-store",
+          headers: {
+            'Cache-Control': 'no-cache, no-store, must-revalidate',
+            'Pragma': 'no-cache'
+          }
+        }),
+        fetch(`/api/emails?_=${timestamp}`, {
+          cache: "no-store",
+          headers: {
+            'Cache-Control': 'no-cache, no-store, must-revalidate',
+            'Pragma': 'no-cache'
+          }
+        })
+      ])
+
+      if (!ticketsResponse.ok) {
         throw new Error("Failed to fetch tickets")
       }
-      const data = await response.json()
-      console.log('[Tickets] Received tickets:', data.tickets?.length || 0)
+
+      const ticketsData = await ticketsResponse.json()
+      let emailIds = new Set<string>()
+
+      // Get CRM email IDs if available
+      if (emailsResponse.ok) {
+        const emailsData = await emailsResponse.json()
+        const emails = emailsData.emails || emailsData || []
+        emailIds = new Set(emails.map((e: { id: string; threadId?: string }) => e.threadId || e.id))
+        console.log('[Tickets] CRM email IDs for sync:', emailIds.size)
+      } else {
+        console.warn('[Tickets] Failed to fetch CRM emails, showing all tickets')
+      }
+
+      let allTickets = ticketsData.tickets || []
+      console.log('[Tickets] Total tickets from Supabase:', allTickets.length)
+
+      // Filter tickets to only show ones that exist in CRM inbox
+      // If we couldn't fetch emails, show all tickets (fallback)
+      if (emailIds.size > 0) {
+        const syncedTickets = allTickets.filter((t: Ticket) => emailIds.has(t.threadId))
+        console.log('[Tickets] Synced tickets (matching CRM):', syncedTickets.length, 'of', allTickets.length)
+        allTickets = syncedTickets
+      }
 
       // Extract unique owner emails for the filter dropdown if we don't have them
-      if (data.tickets && data.tickets.length > 0) {
-        const uniqueEmails = Array.from(new Set(data.tickets.map((t: Ticket) => t.ownerEmail).filter(Boolean))) as string[]
+      if (allTickets.length > 0) {
+        const uniqueEmails = Array.from(new Set(allTickets.map((t: Ticket) => t.ownerEmail).filter(Boolean))) as string[]
         setEmails(prev => {
           const combined = Array.from(new Set([...prev, ...uniqueEmails]))
           return combined.sort()
         })
       }
 
-      const list = data.tickets || []
-      setTickets(list)
-      if (returnData) return list
+      setTickets(allTickets)
+      if (returnData) return allTickets
     } catch (err) {
       console.error('[Tickets] Error fetching tickets:', err)
       setError(err instanceof Error ? err.message : "Failed to load tickets")
@@ -592,6 +625,7 @@ export default function TicketsView({ currentUserId, currentUserRole, globalSear
 
     // OPTIMIZED: Fetch all data in parallel instead of sequentially
     // This makes initial page load much faster
+    // CRM sync now happens automatically in fetchTickets by filtering in-memory
     Promise.all([
       fetchTickets(),
       fetchUsers(),
@@ -3026,6 +3060,39 @@ export default function TicketsView({ currentUserId, currentUserRole, globalSear
                                           </>
                                         )}
                                       </div>
+
+                                      {/* Attachments restored */}
+                                      {msg.attachments && msg.attachments.length > 0 && (
+                                        <div className="mt-4 pt-4 border-t border-border/50">
+                                          <div className="text-xs font-medium text-muted-foreground mb-2 flex items-center gap-1.5">
+                                            <Paperclip className="w-3 h-3" />
+                                            Attachments
+                                          </div>
+                                          <div className="flex flex-wrap gap-2">
+                                            {msg.attachments.map((att) => (
+                                              <a
+                                                key={att.id}
+                                                href={`/api/emails/${msg.id}/attachments/${att.id}?filename=${encodeURIComponent(att.filename)}`}
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                                className="flex items-center gap-2 px-3 py-2 bg-muted/50 hover:bg-muted border border-border rounded-lg transition-colors group text-sm no-underline"
+                                              >
+                                                <div className="p-1.5 bg-background rounded-md border border-border/50 group-hover:border-primary/30 transition-colors">
+                                                  <Paperclip className="w-4 h-4 text-primary/70 group-hover:text-primary" />
+                                                </div>
+                                                <div className="flex flex-col min-w-0">
+                                                  <span className="font-medium text-foreground truncate max-w-[150px]" title={att.filename}>
+                                                    {att.filename}
+                                                  </span>
+                                                  <span className="text-[10px] text-muted-foreground">
+                                                    {(att.size / 1024).toFixed(1)} KB
+                                                  </span>
+                                                </div>
+                                              </a>
+                                            ))}
+                                          </div>
+                                        </div>
+                                      )}
                                     </div>
                                   </div>
                                 </div>
@@ -3214,6 +3281,8 @@ export default function TicketsView({ currentUserId, currentUserRole, globalSear
                   {/* Reply Box */}
                   <Card className="animate-in fade-in slide-in-from-bottom-4 duration-500 ease-out w-full max-w-full border-border/50 shadow-sm hover:shadow-md transition-all duration-300" style={{ animationDelay: '200ms' }}>
                     <CardContent className="p-4 w-full max-w-full overflow-hidden">
+                      {/* Attachments from Thread - Removed as they are now in the conversation bubbles */}
+
                       <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
                         <h3 className="font-semibold text-sm">Reply</h3>
                         <div className="flex items-center gap-2">
@@ -3292,8 +3361,9 @@ export default function TicketsView({ currentUserId, currentUserRole, globalSear
                             size="sm"
                             variant="secondary"
                             onClick={handleGenerateDraft}
-                            disabled={generatingDraft || !threadMessages.length}
+                            disabled={true || generatingDraft || !threadMessages.length}
                             className="h-7 text-xs"
+                            title="AI Draft generation temporarily disabled"
                           >
                             {generatingDraft ? (
                               <>

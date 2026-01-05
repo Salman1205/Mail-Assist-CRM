@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback, useRef } from "react"
 import { Button } from "@/components/ui/button"
-import { Mail, Plus } from "lucide-react"
+import { Mail, Plus, Paperclip } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog"
 import { ConnectImapForm } from "./connect-imap-form"
@@ -19,6 +19,7 @@ interface Email {
   accountEmail?: string // Legacy field
   ownerEmail?: string // New field
   departmentName?: string | null // NEW: Department name from ticket
+  attachments?: { id: string; filename: string; mimeType: string; size: number }[]
 }
 
 const cleanSnippet = (text: string) => {
@@ -348,6 +349,7 @@ export default function EmailList({ selectedEmail, onSelectEmail, onLoadingChang
             body: email.body,
             threadId: email.threadId,
             departmentName: email.departmentName,
+            attachments: email.attachments,
           })}
           className={`w-full text-left rounded-xl transition-all duration-200 ease-out border animate-in fade-in slide-in-from-left-2 group relative overflow-hidden ${selectedEmail === email.id
             ? "border-primary/50 bg-accent/10 shadow-lg ring-1 ring-primary/20"
@@ -399,6 +401,9 @@ export default function EmailList({ selectedEmail, onSelectEmail, onLoadingChang
                   })()}
                 </h3>
                 <div className="flex items-center gap-1.5 flex-shrink-0">
+                  {email.attachments && email.attachments.length > 0 && (
+                    <Paperclip className="w-3 h-3 text-muted-foreground/60" />
+                  )}
                   <span className="text-xs text-muted-foreground/80 font-medium tabular-nums">
                     {formatDate(email.date)}
                   </span>

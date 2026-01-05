@@ -4,7 +4,8 @@ import { StoredEmail } from './storage';
 import { Resend } from 'resend';
 
 // Initialize Resend with API key (safe to be undefined, will just fail gracefully)
-const resend = new Resend(process.env.RESEND_API_KEY);
+const resendApiKey = process.env.RESEND_API_KEY;
+const resend = resendApiKey ? new Resend(resendApiKey) : null;
 
 export const sendEmail = {
   /**
@@ -22,6 +23,10 @@ export const sendEmail = {
     }
 
     try {
+      if (!resend) {
+        console.warn('[EmailService] Resend not initialized. Skipping email.');
+        return { success: false, error: 'Resend not initialized' };
+      }
       const companyName = process.env.COMPANY_NAME || 'Mail Assistant';
 
       const { data, error } = await resend.emails.send({

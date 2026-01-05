@@ -68,8 +68,11 @@ export async function GET(request: NextRequest) {
     // Get account filter if specified
     const accountFilter = request.nextUrl.searchParams.get('account') || undefined;
 
+    // Check if archived tickets should be included
+    const includeArchived = request.nextUrl.searchParams.get('includeArchived') === 'true';
+
     // Get tickets with role-based filtering and optional account scope
-    const tickets = await getTickets(userId, canViewAll, filterEmail, accountFilter, businessId);
+    const tickets = await getTickets(userId, canViewAll, filterEmail, accountFilter, businessId, includeArchived);
 
     return NextResponse.json({ tickets });
   } catch (error) {

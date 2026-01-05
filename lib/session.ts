@@ -45,7 +45,7 @@ export async function setSessionUserEmail(userEmail: string): Promise<void> {
   try {
     // In Vercel production, all requests are HTTPS, so secure should be true
     // Use VERCEL env var or NODE_ENV to detect production
-    const isProduction = process.env.VERCEL === '1' || process.env.NODE_ENV === 'production';
+    const isProduction = (process.env.VERCEL === '1' || process.env.NODE_ENV === 'production') && process.env.NEXT_PUBLIC_APP_URL?.startsWith('https');
 
     const cookieStore = await cookies();
     cookieStore.set(SESSION_COOKIE_NAME, userEmail, {
@@ -71,7 +71,7 @@ export function setSessionUserEmailInResponse(
   try {
     // In Vercel production, all requests are HTTPS, so secure should be true
     // Use VERCEL env var or NODE_ENV to detect production
-    const isProduction = process.env.VERCEL === '1' || process.env.NODE_ENV === 'production';
+    const isProduction = (process.env.VERCEL === '1' || process.env.NODE_ENV === 'production') && process.env.NEXT_PUBLIC_APP_URL?.startsWith('https');
 
     response.cookies.set(SESSION_COOKIE_NAME, userEmail, {
       httpOnly: true,
@@ -157,10 +157,12 @@ export function getCurrentUserIdFromRequest(request: NextRequest): string | null
  */
 export async function setCurrentUserId(userId: string): Promise<void> {
   try {
+    // Only set secure: true if using HTTPS (Vercel or custom domain with SSL)
+    const isHttps = process.env.NEXT_PUBLIC_APP_URL?.startsWith('https');
     const cookieStore = await cookies();
     cookieStore.set(CURRENT_USER_ID_COOKIE_NAME, userId, {
       httpOnly: true,
-      secure: process.env.VERCEL === '1' || process.env.NODE_ENV === 'production',
+      secure: isHttps,
       sameSite: 'lax',
       maxAge: 60 * 60 * 24 * 365, // 1 year
       path: '/',
@@ -178,7 +180,7 @@ export function setCurrentUserIdInResponse(
   userId: string
 ): NextResponse {
   try {
-    const isProduction = process.env.VERCEL === '1' || process.env.NODE_ENV === 'production';
+    const isProduction = (process.env.VERCEL === '1' || process.env.NODE_ENV === 'production') && process.env.NEXT_PUBLIC_APP_URL?.startsWith('https');
     response.cookies.set(CURRENT_USER_ID_COOKIE_NAME, userId, {
       httpOnly: true,
       secure: isProduction,
@@ -213,6 +215,29 @@ export interface SessionUser {
 export async function validateBusinessSession(): Promise<SessionUser | null> {
   try {
     const cookieStore = await cookies()
+
+    // 1. Check for CRM Admin Session (Hardcoded Admin)
+    const adminSessionCookie = cookieStore.get('crm_admin_session')
+    if (adminSessionCookie) {
+      try {
+        const sessionData = JSON.parse(Buffer.from(adminSessionCookie.value, 'base64').toString('utf-8'));
+        if (sessionData.userId === '00000000-0000-0000-0000-000000000001') {
+          return {
+            id: sessionData.userId,
+            name: sessionData.userName || 'Administrator',
+            email: sessionData.userEmail || 'admin@theinsolvencygroup.com',
+            role: 'admin',
+            businessId: 'admin-business-id', // Mock business ID for admin
+            businessName: 'Admin Workspace',
+            accountType: 'business'
+          };
+        }
+      } catch (e) {
+        console.error('[Session] Invalid admin session format');
+      }
+    }
+
+    // 2. Check for Standard Supabase Session
     const sessionToken = cookieStore.get('session_token')?.value
 
     if (!sessionToken) {

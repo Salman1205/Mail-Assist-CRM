@@ -51,10 +51,12 @@ export async function POST(request: NextRequest) {
         const sessionToken = Buffer.from(JSON.stringify(sessionData)).toString('base64');
 
         // Set cookie with session token
+        // Only set secure: true if using HTTPS (Vercel or custom domain with SSL)
+        const isHttps = process.env.NEXT_PUBLIC_APP_URL?.startsWith('https');
         const cookieStore = await cookies();
         cookieStore.set('crm_admin_session', sessionToken, {
             httpOnly: true,
-            secure: process.env.NODE_ENV === 'production',
+            secure: isHttps,
             sameSite: 'lax',
             maxAge: 60 * 60 * 24 * 7, // 7 days
             path: '/',
@@ -63,7 +65,7 @@ export async function POST(request: NextRequest) {
         // Also set a simple current user cookie for compatibility
         cookieStore.set('current_user_id', ADMIN_USER.id, {
             httpOnly: false,
-            secure: process.env.NODE_ENV === 'production',
+            secure: isHttps,
             sameSite: 'lax',
             maxAge: 60 * 60 * 24 * 7,
             path: '/',

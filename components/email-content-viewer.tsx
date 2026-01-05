@@ -36,15 +36,52 @@ export function EmailContentViewer({ content, className, emailId, attachments }:
     const doc = iframe.contentDocument || iframe.contentWindow?.document
     if (!doc) return
 
-    // Replace CID images if possible
+    // Replace CID images with attachment URLs
+    // CID (Content-ID) in emails can reference attachments by various patterns
     let processedContent = content;
     if (emailId && attachments && attachments.length > 0) {
       attachments.forEach(att => {
-        // Match cid:filename or just cid:id
-        const cidRegex = new RegExp(`cid:${att.id}|cid:${att.filename}`, 'gi');
-        processedContent = processedContent.replace(cidRegex, `/api/emails/${emailId}/attachments/${att.id}?filename=${encodeURIComponent(att.filename)}`);
+        // Get filename without extension for matching
+        const nameWithoutExt = att.filename.replace(/\.[^.]+$/, '');
+
+        // Build regex to match various CID patterns:
+        // - cid:123 (by ID)
+        // - cid:image.png (by full filename)
+        // - cid:image (by name without extension)
+        // Also handle Content-ID format: <image.png> or <123>
+        const patterns = [
+          `cid:${att.id}`,
+          `cid:${att.filename}`,
+          `cid:${nameWithoutExt}`,
+        ].map(p => p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')); // Escape regex chars
+
+        const cidRegex = new RegExp(`(${patterns.join('|')})`, 'gi');
+        const replacementUrl = `/api/emails/${emailId}/attachments/${att.id}?filename=${encodeURIComponent(att.filename)}`;
+        processedContent = processedContent.replace(cidRegex, replacementUrl);
       });
     }
+
+    // Proxy external images through our server to bypass CORS/auth issues
+    // Replace http:// and https:// image sources with our proxy
+    processedContent = processedContent.replace(
+      /(<img[^>]*\ssrc=["'])(https?:\/\/[^"']+)(["'][^>]*>)/gi,
+      (match, prefix, url, suffix) => {
+        // Skip if already proxied or is a local URL
+        if (url.includes('/api/proxy/image') || url.startsWith('/')) {
+          return match;
+        }
+        const proxiedUrl = `/api/proxy/image?url=${encodeURIComponent(url)}`;
+        return `${prefix}${proxiedUrl}${suffix}`;
+      }
+    );
+
+    // Clean up any remaining unmatched cid: URLs to prevent ERR_UNKNOWN_URL_SCHEME
+    // Replace with a transparent 1x1 gif to hide broken images
+    const transparentGif = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+    processedContent = processedContent.replace(
+      /(<img[^>]*\ssrc=["'])cid:[^"']+["']/gi,
+      `$1${transparentGif}"`
+    );
 
     // Sanitize content
     const sanitizedContent = DOMPurify.sanitize(processedContent, {
@@ -102,6 +139,20 @@ export function EmailContentViewer({ content, className, emailId, attachments }:
             border-left: 4px solid #e5e7eb; 
             color: #4b5563;
         }
+
+        hr {
+            border: 0;
+            border-top: 1px solid ${isDark ? '#333' : '#eee'};
+            margin: 16px 0;
+            background-color: transparent !important;
+        }
+        
+        /* Force transparent backgrounds on common containers to prevent black bars */
+        div, table, tr, td {
+            background-color: transparent !important;
+        }
+        
+        /* Exception for specific markers if needed, but generally safer to be transparent */
 
         ::-webkit-scrollbar {
           width: 8px;

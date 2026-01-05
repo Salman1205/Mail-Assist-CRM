@@ -71,6 +71,7 @@ WHERE mr.archived = 0
   AND (mr.clientid IS NULL OR mr.clientid = 0)
   AND (mr.email_from <> 'MAILER-DAEMON@eu-west-1.amazonses.com:MAILER-DAEMON@eu-west-1.amazonses.com' OR mr.email_from IS NULL)   
   AND (mr.subject NOT LIKE 'Auto%' AND mr.subject NOT LIKE '%Auto%' AND mr.subject NOT LIKE '%Acknowledgement%' AND mr.subject NOT LIKE 'Acknowledgement%' OR mr.subject IS NULL)
+  AND YEAR(FROM_UNIXTIME(mr.received_on)) != 1970
 ORDER BY Received_On DESC
 LIMIT ?
 `;
@@ -162,6 +163,30 @@ export async function fetchCrmEmails(maxResults: number = 100): Promise<CrmEmail
             };
         });
 
+        // Batch fetch attachments for these emails
+        const messageIds = emails.map(e => Number(e.id));
+        if (messageIds.length > 0) {
+            const attachmentSql = `
+                SELECT id, messageid, filename, content_type, size
+                FROM theinsolvencygroup.attachment
+                WHERE messageid IN (${messageIds.join(',')})
+            `;
+            const allAttachments = await query<{ id: number; messageid: number; filename: string; content_type: string; size: number }>(attachmentSql);
+
+            // Map attachments to emails
+            emails.forEach(email => {
+                const emailId = Number(email.id);
+                email.attachments = allAttachments
+                    .filter(att => att.messageid === emailId)
+                    .map(att => ({
+                        id: String(att.id),
+                        filename: att.filename,
+                        mimeType: att.content_type,
+                        size: att.size
+                    }));
+            });
+        }
+
         return emails;
     } catch (error) {
         console.error('[CRM] Error fetching emails:', error);
@@ -219,7 +244,7 @@ export async function getCrmEmailById(messageId: string): Promise<CrmEmail | nul
         const attachmentSql = `
             SELECT id, filename, content_type, size
             FROM theinsolvencygroup.attachment
-            WHERE messageid = ? AND serialized IS NOT NULL
+            WHERE messageid = ?
         `;
         const attachments = await query<{ id: number; filename: string; content_type: string; size: number }>(attachmentSql, [messageId]);
 
@@ -283,6 +308,7 @@ export async function searchCrmEmails(searchQuery: string, maxResults: number = 
       WHERE mr.archived = 0
         AND (mr.clientid IS NULL OR mr.clientid = 0)
         AND (mr.subject LIKE ? OR mr.content LIKE ? OR mr.email_from LIKE ?)
+        AND YEAR(FROM_UNIXTIME(mr.received_on)) != 1970
       ORDER BY Received_On DESC
       LIMIT ?
     `;
@@ -290,7 +316,7 @@ export async function searchCrmEmails(searchQuery: string, maxResults: number = 
         const rows = await query<CrmEmailRow>(sql, [likeQuery, likeQuery, likeQuery, maxResults]);
 
         // Map to expected format (same as fetchCrmEmails)
-        return rows.map((row) => {
+        const emails: CrmEmail[] = rows.map((row) => {
             const content = row.content || '';
             const plainContent = stripHtml(content);
 
@@ -321,8 +347,60 @@ export async function searchCrmEmails(searchQuery: string, maxResults: number = 
                 assignment: row.Assignment,
             };
         });
+
+        // Batch fetch attachments
+        const messageIds = emails.map(e => Number(e.id));
+        if (messageIds.length > 0) {
+            const attachmentSql = `
+                SELECT id, messageid, filename, content_type, size
+                FROM theinsolvencygroup.attachment
+                WHERE messageid IN (${messageIds.join(',')})
+            `;
+            const allAttachments = await query<{ id: number; messageid: number; filename: string; content_type: string; size: number }>(attachmentSql);
+
+            emails.forEach(email => {
+                const emailId = Number(email.id);
+                email.attachments = allAttachments
+                    .filter(att => att.messageid === emailId)
+                    .map(att => ({
+                        id: String(att.id),
+                        filename: att.filename,
+                        mimeType: att.content_type,
+                        size: att.size
+                    }));
+            });
+        }
+
+        return emails;
     } catch (error) {
         console.error('[CRM] Error searching emails:', error);
+        throw error;
+    }
+}
+
+/**
+ * Get all active CRM email IDs for sync comparison
+ * Returns a Set of CRM message IDs that currently exist in the CRM database
+ */
+export async function getCrmEmailIds(): Promise<Set<string>> {
+    try {
+        const sql = `
+            SELECT mr.id as crm_message_id
+            FROM theinsolvencygroup.message_received mr
+            WHERE mr.archived = 0
+              AND (mr.clientid IS NULL OR mr.clientid = 0)
+              AND (mr.email_from <> 'MAILER-DAEMON@eu-west-1.amazonses.com:MAILER-DAEMON@eu-west-1.amazonses.com' OR mr.email_from IS NULL)
+              AND (mr.subject NOT LIKE 'Auto%' AND mr.subject NOT LIKE '%Auto%' AND mr.subject NOT LIKE '%Acknowledgement%' AND mr.subject NOT LIKE 'Acknowledgement%' OR mr.subject IS NULL)
+              AND YEAR(FROM_UNIXTIME(mr.received_on)) != 1970
+        `;
+
+        const rows = await query<{ crm_message_id: number }>(sql);
+        const ids = new Set<string>(rows.map(row => String(row.crm_message_id)));
+
+        console.log(`[CRM] Fetched ${ids.size} active email IDs for sync`);
+        return ids;
+    } catch (error) {
+        console.error('[CRM] Error fetching email IDs:', error);
         throw error;
     }
 }

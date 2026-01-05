@@ -3,6 +3,7 @@ import { getCurrentUserEmail } from './storage';
 
 export type TicketStatus = 'open' | 'pending' | 'on_hold' | 'closed';
 export type TicketPriority = 'low' | 'medium' | 'high' | 'urgent';
+export type TicketSourceStatus = 'active' | 'archived_external';
 
 export interface Ticket {
   id: string;
@@ -26,6 +27,7 @@ export interface Ticket {
   departmentName?: string | null; // Department name (for display)
   classificationConfidence?: number | null; // AI classification confidence (0-100)
   lastViewedAt?: string | null; // User specific view timestamp
+  sourceStatus?: TicketSourceStatus; // Whether CRM email still exists ('active' | 'archived_external')
 }
 
 export interface TicketSeed {
@@ -93,6 +95,7 @@ function mapRowToTicket(row: any, currentUserId: string | null = null): Ticket {
     departmentName: row.department_name || null, // Joined from departments table
     classificationConfidence: row.classification_confidence || null,
     lastViewedAt,
+    sourceStatus: (row.source_status || 'active') as TicketSourceStatus,
   };
 }
 
@@ -161,19 +164,49 @@ export async function getOrCreateTicketForThread(
     payload.user_email = userEmail;
   }
 
-  const { data, error } = await supabase
-    .from('tickets')
-    .insert(payload)
-    .select('*')
-    .maybeSingle();
+  /* 
+    Retry logic for race conditions:
+    If insert fails with unique constraint violation (likely thread_id), 
+    it means another process created it just now. Fetch and return that one.
+  */
+  let data, error;
+
+  try {
+    const result = await supabase
+      .from('tickets')
+      .insert(payload)
+      .select('*')
+      .maybeSingle();
+
+    data = result.data;
+    error = result.error;
+  } catch (err) {
+    // Supabase JS might throw, or return error object. 
+    // Usually it returns error object, but let's be safe.
+    console.warn('Exception during ticket insert:', err);
+  }
 
   if (error) {
+    // Check for unique violation (Postgres code 23505)
+    if (error.code === '23505') {
+      console.log(`[Ticket] Race condition detected for thread ${threadId}. Fetching existing ticket.`);
+      const existingTicket = await getTicketByThreadId(threadId, userEmail);
+      if (existingTicket) {
+        return existingTicket;
+      }
+      // If still not found (weird), fall through to error logging
+    }
+
     console.error('Error creating ticket:', error);
     console.error('Ticket payload:', payload);
     return null;
   }
 
   if (!data) {
+    // Check if it exists now (rare edge case)
+    const existing = await getTicketByThreadId(threadId, userEmail);
+    if (existing) return existing;
+
     console.warn('No data returned when creating ticket for thread:', threadId);
     return null;
   }
@@ -379,16 +412,16 @@ export async function ensureTicketForEmail(
 
   const { data, error } = await query
     .select('*')
-    .maybeSingle();
+    .limit(1); // Use limit(1) instead of maybeSingle to handle duplicate tickets gracefully
 
   if (error) {
     console.error('Error updating ticket timestamps:', error);
     return ticket;
   }
 
-  if (!data) return ticket;
+  if (!data || data.length === 0) return ticket;
 
-  const updatedTicket = mapRowToTicket(data);
+  const updatedTicket = mapRowToTicket(data[0]);
 
   // Emit realtime signal (best-effort; non-blocking)
   try {
@@ -410,13 +443,15 @@ export async function ensureTicketForEmail(
  * Get tickets with role-based filtering
  * - Agents: see only their own tickets + unassigned tickets
  * - Admin/Manager: see all tickets for the shared Gmail account
+ * - includeArchived: if false (default), only returns active tickets
  */
 export async function getTickets(
   currentUserId: string | null,
   canViewAll: boolean,
   userEmail: string | null,
   accountFilter?: string,
-  businessId?: string | null
+  businessId?: string | null,
+  includeArchived: boolean = false
 ): Promise<Ticket[]> {
   if (!supabase) return [];
 
@@ -430,6 +465,11 @@ export async function getTickets(
       department:departments(id, name),
       ticket_views(user_id, last_viewed_at)
     `);
+
+  // Filter by source_status (active by default, unless includeArchived is true)
+  if (!includeArchived) {
+    query = query.or('source_status.eq.active,source_status.is.null');
+  }
 
   // Note: We are now fetching ALL views and filtering in JS (mapRowToTicket) 
   // because embedded filtering can sometimes be tricky with left joins/inner joins.
@@ -840,5 +880,107 @@ export async function updateTicketTags(
   if (!data) return null;
 
   return mapRowToTicket(data);
+}
+
+/**
+ * Sync tickets with CRM emails
+ * Marks tickets as 'archived_external' if their CRM email no longer exists
+ * Re-activates tickets if their CRM email reappears
+ * 
+ * @returns Object with counts of archived and reactivated tickets
+ */
+export async function syncTicketsWithCrmEmails(): Promise<{
+  archivedCount: number;
+  reactivatedCount: number;
+  totalChecked: number;
+}> {
+  if (!supabase) {
+    return { archivedCount: 0, reactivatedCount: 0, totalChecked: 0 };
+  }
+
+  try {
+    console.log('[Ticket Sync] Starting sync with CRM emails...');
+
+    // 1. Get all active CRM email IDs
+    const { getCrmEmailIds } = await import('./crm-email-provider');
+    const activeCrmIds = await getCrmEmailIds();
+
+    // 2. Get all tickets from Supabase (we need thread_id to compare)
+    const { data: tickets, error: fetchError } = await supabase
+      .from('tickets')
+      .select('id, thread_id, source_status');
+
+    if (fetchError) {
+      console.error('[Ticket Sync] Error fetching tickets:', fetchError);
+      throw fetchError;
+    }
+
+    if (!tickets || tickets.length === 0) {
+      console.log('[Ticket Sync] No tickets to sync');
+      return { archivedCount: 0, reactivatedCount: 0, totalChecked: 0 };
+    }
+
+    // 3. Categorize tickets based on CRM presence
+    const toArchive: string[] = []; // Ticket IDs to mark as archived
+    const toReactivate: string[] = []; // Ticket IDs to mark as active
+
+    for (const ticket of tickets) {
+      const existsInCrm = activeCrmIds.has(ticket.thread_id);
+      const currentStatus = ticket.source_status || 'active';
+
+      if (!existsInCrm && currentStatus === 'active') {
+        // CRM email no longer exists, archive the ticket
+        toArchive.push(ticket.id);
+      } else if (existsInCrm && currentStatus === 'archived_external') {
+        // CRM email reappeared, reactivate the ticket
+        toReactivate.push(ticket.id);
+      }
+    }
+
+    // 4. Batch update tickets that need to be archived
+    if (toArchive.length > 0) {
+      const { error: archiveError } = await supabase
+        .from('tickets')
+        .update({
+          source_status: 'archived_external',
+          updated_at: new Date().toISOString(),
+        })
+        .in('id', toArchive);
+
+      if (archiveError) {
+        console.error('[Ticket Sync] Error archiving tickets:', archiveError);
+      } else {
+        console.log(`[Ticket Sync] Archived ${toArchive.length} tickets (CRM emails removed)`);
+      }
+    }
+
+    // 5. Batch update tickets that need to be reactivated
+    if (toReactivate.length > 0) {
+      const { error: reactivateError } = await supabase
+        .from('tickets')
+        .update({
+          source_status: 'active',
+          updated_at: new Date().toISOString(),
+        })
+        .in('id', toReactivate);
+
+      if (reactivateError) {
+        console.error('[Ticket Sync] Error reactivating tickets:', reactivateError);
+      } else {
+        console.log(`[Ticket Sync] Reactivated ${toReactivate.length} tickets (CRM emails returned)`);
+      }
+    }
+
+    console.log(`[Ticket Sync] Sync complete. Checked: ${tickets.length}, Archived: ${toArchive.length}, Reactivated: ${toReactivate.length}`);
+
+    return {
+      archivedCount: toArchive.length,
+      reactivatedCount: toReactivate.length,
+      totalChecked: tickets.length,
+    };
+  } catch (error) {
+    console.error('[Ticket Sync] Error during sync:', error);
+    throw error;
+  }
 }
 

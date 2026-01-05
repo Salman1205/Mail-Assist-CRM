@@ -5,7 +5,7 @@ import { getCurrentUser } from '@/lib/session';
 
 // Initialize Supabase client with service role for admin actions
 const supabase = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL!,
     process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 

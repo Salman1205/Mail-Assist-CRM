@@ -10,7 +10,9 @@ import { validateBusinessSession } from '@/lib/session'
 import { randomBytes } from 'crypto'
 import { Resend } from 'resend'
 
-const resend = new Resend(process.env.RESEND_API_KEY!)
+// Initialize Resend safely - if key is missing, we'll skip sending emails
+const resendApiKey = process.env.RESEND_API_KEY
+const resend = resendApiKey ? new Resend(resendApiKey) : null
 
 export async function POST(request: NextRequest) {
   try {
@@ -126,127 +128,116 @@ export async function POST(request: NextRequest) {
     // 7. Send invitation email
     const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
     const inviteUrl = `${appUrl}/invite/${invitationToken}`
-
     const companyName = process.env.COMPANY_NAME || 'Mail Assistant'
 
-    try {
-      const resendResult = await resend.emails.send({
-        from: `${companyName} <onboarding@resend.dev>`,
-        to: email,
-        subject: `You've been invited to join ${sessionUser.businessName}`,
-        html: `
-          <!DOCTYPE html>
-          <html>
-            <head>
-              <style>
-                body {
-                  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-                  line-height: 1.6;
-                  color: #333;
-                  max-width: 600px;
-                  margin: 0 auto;
-                  padding: 20px;
-                }
-                .container {
-                  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                  border-radius: 12px;
-                  padding: 40px;
-                  color: white;
-                }
-                .content {
-                  background: white;
-                  border-radius: 8px;
-                  padding: 30px;
-                  color: #333;
-                  margin-top: 20px;
-                }
-                .button {
-                  display: inline-block;
-                  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                  color: white;
-                  padding: 14px 32px;
-                  text-decoration: none;
-                  border-radius: 8px;
-                  font-weight: 600;
-                  margin: 20px 0;
-                }
-                .footer {
-                  margin-top: 30px;
-                  padding-top: 20px;
-                  border-top: 1px solid #eee;
-                  font-size: 12px;
-                  color: #666;
-                  text-align: center;
-                }
-              </style>
-            </head>
-            <body>
-              <div class="container">
-                <h1 style="margin: 0; font-size: 28px;">🎉 You've Been Invited!</h1>
-                <p style="margin: 10px 0 0 0; opacity: 0.9;">Join ${sessionUser.businessName} on ${companyName}</p>
-              </div>
-              
-              <div class="content">
-                <p>Hi ${name},</p>
+    if (resend) {
+      try {
+        const resendResult = await resend.emails.send({
+          from: `${companyName} <onboarding@resend.dev>`,
+          to: email,
+          subject: `You've been invited to join ${sessionUser.businessName}`,
+          html: `
+            <!DOCTYPE html>
+            <html>
+                <head>
+                <style>
+                    body {
+                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+                    line-height: 1.6;
+                    color: #333;
+                    max-width: 600px;
+                    margin: 0 auto;
+                    padding: 20px;
+                    }
+                    .container {
+                    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                    border-radius: 12px;
+                    padding: 40px;
+                    color: white;
+                    }
+                    .content {
+                    background: white;
+                    border-radius: 8px;
+                    padding: 30px;
+                    color: #333;
+                    margin-top: 20px;
+                    }
+                    .button {
+                    display: inline-block;
+                    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                    color: white;
+                    padding: 14px 32px;
+                    text-decoration: none;
+                    border-radius: 8px;
+                    font-weight: 600;
+                    margin: 20px 0;
+                    }
+                    .footer {
+                    margin-top: 30px;
+                    padding-top: 20px;
+                    border-top: 1px solid #eee;
+                    font-size: 12px;
+                    color: #666;
+                    text-align: center;
+                    }
+                </style>
+                </head>
+                <body>
+                <div class="container">
+                    <h1 style="margin: 0; font-size: 28px;">🎉 You've Been Invited!</h1>
+                    <p style="margin: 10px 0 0 0; opacity: 0.9;">Join ${sessionUser.businessName} on ${companyName}</p>
+                </div>
                 
-                <p><strong>${sessionUser.name}</strong> has invited you to join <strong>${sessionUser.businessName}</strong> as a ${role}.</p>
+                <div class="content">
+                    <p>Hi ${name},</p>
+                    
+                    <p><strong>${sessionUser.name}</strong> has invited you to join <strong>${sessionUser.businessName}</strong> as a ${role}.</p>
+                    
+                    <p>Click the button below to accept your invitation and set up your account:</p>
+                    
+                    <center>
+                    <a href="${inviteUrl}" class="button">Accept Invitation</a>
+                    </center>
+                    
+                    <p style="font-size: 14px; color: #666;">
+                    Or copy and paste this link into your browser:<br>
+                    <a href="${inviteUrl}" style="color: #667eea; word-break: break-all;">${inviteUrl}</a>
+                    </p>
+                    
+                    <p style="font-size: 14px; color: #666;">
+                    This invitation will expire in 7 days.
+                    </p>
+                </div>
                 
-                <p>Click the button below to accept your invitation and set up your account:</p>
-                
-                <center>
-                  <a href="${inviteUrl}" class="button">Accept Invitation</a>
-                </center>
-                
-                <p style="font-size: 14px; color: #666;">
-                  Or copy and paste this link into your browser:<br>
-                  <a href="${inviteUrl}" style="color: #667eea; word-break: break-all;">${inviteUrl}</a>
-                </p>
-                
-                <p style="font-size: 14px; color: #666;">
-                  This invitation will expire in 7 days.
-                </p>
-              </div>
-              
-              <div class="footer">
-                <p>This email was sent by ${companyName}. If you weren't expecting this invitation, you can safely ignore this email.</p>
-              </div>
-            </body>
-          </html>
-        `,
-      });
-      console.log('[InviteAgent] Resend API response:', JSON.stringify(resendResult));
-      if (!resendResult || resendResult.error) {
-        console.error('[InviteAgent] Resend API error:', resendResult?.error);
-        // Delete the invitation if email fails
-        await supabase
-          .from('agent_invitations')
-          .delete()
-          .eq('id', invitation.id);
-        return NextResponse.json(
-          { error: 'Failed to send invitation email. Please try again.' },
-          { status: 500 }
-        );
+                <div class="footer">
+                    <p>This email was sent by ${companyName}. If you weren't expecting this invitation, you can safely ignore this email.</p>
+                </div>
+                </body>
+            </html>
+            `,
+        });
+        console.log('[InviteAgent] Resend API response:', JSON.stringify(resendResult));
+        if (!resendResult || resendResult.error) {
+          console.error('[InviteAgent] Resend API error:', resendResult?.error);
+          // We DON'T delete the invitation here if email config is missing/failed, 
+          // because the user might just want the link.
+          // But if Resend WAS attempted and failed, maybe we should warn.
+        } else {
+          console.log('[InviteAgent] Invitation email sent successfully');
+        }
+      } catch (emailError) {
+        console.error('[InviteAgent] Error sending invitation email:', emailError)
       }
-      console.log('[InviteAgent] Invitation email sent successfully');
-    } catch (emailError) {
-      console.error('[InviteAgent] Error sending invitation email:', emailError)
-
-      // Delete the invitation if email fails
-      await supabase
-        .from('agent_invitations')
-        .delete()
-        .eq('id', invitation.id)
-
-      return NextResponse.json(
-        { error: 'Failed to send invitation email. Please try again.' },
-        { status: 500 }
-      )
+    } else {
+      console.log('[InviteAgent] RESEND_API_KEY not found. Skipping email sending. Invitation link:', inviteUrl);
     }
 
     // 8. Return success
     return NextResponse.json({
       success: true,
-      message: `Invitation sent to ${email}`,
+      message: process.env.RESEND_API_KEY
+        ? `Invitation sent to ${email}`
+        : `Invitation created. Email not sent (API key missing). Link: ${inviteUrl}`,
       invitation: {
         id: invitation.id,
         email: invitation.email,
@@ -254,6 +245,7 @@ export async function POST(request: NextRequest) {
         role: invitation.role,
         status: invitation.status,
         expiresAt: invitation.expires_at,
+        token: invitationToken
       },
     })
   } catch (error) {
